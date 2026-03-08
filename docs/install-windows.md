@@ -28,6 +28,7 @@ The first public installer release is unsigned. Windows SmartScreen may show a w
 
 - Combine, split, preview, and inspect PDFs
 - Export text, images, attachments, metadata, and tables
+- Build LLM-ready extraction bundles for downstream tools
 - Use bundled workflow templates from the `Start Here` surface
 - Run folder workflows locally with repeatable outputs
 

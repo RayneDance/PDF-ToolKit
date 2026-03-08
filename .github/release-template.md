@@ -2,6 +2,7 @@
 
 - Installable Windows desktop PDF workflows for real office/admin work
 - New `Start Here` onboarding surface with bundled workflow templates
+- Built-in LLM-ready extraction bundles for downstream prompts and indexing
 - Standard Windows installer for non-Python users
 - Portable packaged app still available
 - Offline-first core workflows ready immediately; OCR remains optional for this release
@@ -32,3 +33,7 @@
 ## OCR note
 
 OCR is not bundled in the default public release yet. Core merge, split, preview, extraction, metadata, and automation workflows are still available without extra setup.
+
+## LLM note
+
+LLM-ready extraction is built in. OpenAI-powered analysis remains optional and requires `OPENAI_API_KEY`.

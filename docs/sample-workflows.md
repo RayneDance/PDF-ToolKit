@@ -24,6 +24,20 @@
 - Keep `All` or choose CSV, XLSX, or JSON
 - Save the results into a clean output folder
 
+## Build an LLM-ready extraction bundle
+
+- Choose `Extract For LLM`
+- Select the source PDF
+- Save into a dedicated output folder
+- Use the generated Markdown, JSON, and JSONL files for downstream prompts, retrieval, or indexing
+
+## Analyze an extracted bundle with OpenAI
+
+- Choose `Analyze With LLM`
+- Point the app at a PDF and output folder
+- Pick `Summary`, `Entities`, or `Q&A`
+- Set `OPENAI_API_KEY` first, since the OpenAI analysis path is optional
+
 ## OCR scanned documents
 
 - Open `Start Here`

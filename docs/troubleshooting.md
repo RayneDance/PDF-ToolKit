@@ -10,6 +10,10 @@
 
 That is expected unless OCR tools were installed separately or bundled into the app.
 
+## LLM analysis shows as unavailable
+
+That is expected unless `OPENAI_API_KEY` is configured. Local LLM-ready extraction can still be used without it.
+
 ## Preview does not update
 
 - Make sure the selected input is a PDF file.

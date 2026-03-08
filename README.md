@@ -22,6 +22,7 @@ PDF Toolkit is built for the jobs people actually repeat all week, not for demo 
 - split filing sets by page range
 - redact PII before sharing
 - export text and tables for downstream systems
+- produce LLM-ready document bundles for downstream prompts and indexing
 - run repeatable folder workflows locally on Windows
 
 It is Windows-first, offline-first, and designed to feel like a normal desktop app instead of a Python setup project.
@@ -53,6 +54,8 @@ If you prefer a portable copy, download `pdf-toolkit-windows-x64.zip` instead.
 
 The app opens to a `Start Here` surface that gets a new user to a real result fast:
 
+![Start Here workspace](docs/assets/screenshot-start-here.png)
+
 - quick routes for combine, split, redact, export text, export tables, and folder workflows
 - bundled workflow templates with sane defaults for common office tasks
 - readiness messaging that separates core-ready from optional add-ons
@@ -73,7 +76,15 @@ Built-in templates currently include:
 - Preview and inspect PDF contents before exporting
 - Text extraction, image extraction, attachments, forms, bookmarks, and metadata tools
 - Table export to CSV, XLSX, and JSON
+- LLM-ready extraction bundles in Markdown, JSON, and JSONL for downstream processing
 - Batch jobs, watch folders, and duplicate-file cleanup
+
+## Optional add-ons and advanced workflows
+
+- OCR for scanned PDFs remains optional
+- OpenAI-powered LLM analysis remains optional
+- LLM-ready extraction is built in, so you can prepare chunked document bundles even on offline machines
+- Folder workflows can combine core steps with LLM extraction when you need structured downstream artifacts
 
 ## Why this instead of random PDF tools?
 
@@ -98,7 +109,7 @@ Details: [docs/enabling-ocr.md](docs/enabling-ocr.md)
 
 ### Main workspace
 
-![Main workspace](docs/assets/screenshot-dashboard.svg)
+![Main workspace](docs/assets/screenshot-start-here.png)
 
 ### PDF preview workflow
 
@@ -118,6 +129,7 @@ Details: [docs/enabling-ocr.md](docs/enabling-ocr.md)
 - Split filing packets with `Split By Page Ranges`
 - Redact PII for outside sharing with `Redact PII For Sharing`
 - Export tables for spreadsheets with `Export Tables To Spreadsheet Files`
+- Export LLM-ready Markdown/JSON/JSONL bundles for downstream prompts and indexing
 - Set up recurring intake processing with `Watch Incoming Folder`
 
 More examples: [docs/sample-workflows.md](docs/sample-workflows.md)
@@ -174,6 +186,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 - The app is offline-first and does not include auto-update behavior in this release.
 - OCR is optional and may require extra local tools.
 - LLM features remain secondary and optional, not the main product story.
+- LLM-ready extraction is included; OpenAI analysis is optional.
 - Source install remains available for developers and advanced users.
 
 ## Troubleshooting
@@ -181,6 +194,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
 - Packaged app will not start: [docs/troubleshooting.md](docs/troubleshooting.md)
 - Installer shows a SmartScreen warning: expected for this unsigned first release
 - OCR shows as missing: expected unless OCR tools were installed separately
+- LLM analysis shows as unavailable: expected unless `OPENAI_API_KEY` is configured
 - Source install problems: recreate `.venv` and reinstall with Python 3.11+
 
 ## Contributing
