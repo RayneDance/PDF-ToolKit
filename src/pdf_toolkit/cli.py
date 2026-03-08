@@ -51,7 +51,7 @@ def _render_table(title: str, columns: list[str], rows: list[list[str]]) -> None
 
 
 @app.command("doctor")
-def doctor_command(feature: str = typer.Option("all", help="Dependency set to validate: all, ocr, redaction, tables, batch, render.")) -> None:
+def doctor_command(feature: str = typer.Option("all", help="Dependency set to validate: all, ocr, redaction, tables, batch, render, llm.")) -> None:
     details = _run_cli("doctor", {"feature": feature})
     rows = []
     missing = False
@@ -117,6 +117,60 @@ def rotate_command(input_path: Path, output: Path = typer.Option(..., "--output"
 @app.command("extract-text")
 def extract_text_command(input_path: Path, output: Path | None = typer.Option(None, "--output", "-o"), report: Path | None = typer.Option(None, "--report"), overwrite: bool = typer.Option(False, "--overwrite"), quiet: bool = typer.Option(False, "--quiet")) -> None:
     _quiet_write("extract-text", {"input_path": input_path, "output": output}, report=report, overwrite=overwrite, quiet=quiet)
+
+
+@app.command("extract-llm")
+def extract_llm_command(
+    input_path: Path,
+    output_dir: Path = typer.Option(..., "--output-dir", "-o"),
+    chunk_size: int = typer.Option(1200, "--chunk-size"),
+    overlap: int = typer.Option(200, "--overlap"),
+    include_page_markers: bool = typer.Option(True, "--include-page-markers/--no-page-markers"),
+    include_metadata: bool = typer.Option(True, "--include-metadata/--no-metadata"),
+    report: Path | None = typer.Option(None, "--report"),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+    quiet: bool = typer.Option(False, "--quiet"),
+) -> None:
+    _quiet_write(
+        "extract-llm",
+        {
+            "input_path": input_path,
+            "output_dir": output_dir,
+            "chunk_size": chunk_size,
+            "overlap": overlap,
+            "include_page_markers": include_page_markers,
+            "include_metadata": include_metadata,
+        },
+        report=report,
+        overwrite=overwrite,
+        quiet=quiet,
+    )
+
+
+@app.command("analyze-llm")
+def analyze_llm_command(
+    input_path: Path,
+    output_dir: Path = typer.Option(..., "--output-dir", "-o"),
+    preset: str = typer.Option("summary", "--preset"),
+    question: str | None = typer.Option(None, "--question"),
+    model: str = typer.Option("gpt-5-mini", "--model"),
+    report: Path | None = typer.Option(None, "--report"),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+    quiet: bool = typer.Option(False, "--quiet"),
+) -> None:
+    _quiet_write(
+        "analyze-llm",
+        {
+            "input_path": input_path,
+            "output_dir": output_dir,
+            "preset": preset,
+            "question": question,
+            "model": model,
+        },
+        report=report,
+        overwrite=overwrite,
+        quiet=quiet,
+    )
 
 
 @app.command("protect")

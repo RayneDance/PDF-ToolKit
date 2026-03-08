@@ -2,28 +2,40 @@
 
 ## Merge monthly invoice PDFs
 
-- Choose `Merge`
+- Open `Start Here`
+- Choose `Merge Invoice Packet`
 - Add all invoice PDFs
-- Set an output file such as `merged-invoices.pdf`
+- Keep or rename the suggested output file
 - Run the job and review the merged preview
 
 ## Redact sensitive identifiers
 
-- Choose `Redact`
+- Open `Start Here`
+- Choose `Redact PII For Sharing`
 - Open the PDF
-- Add patterns such as account numbers or names
+- Adjust the starter patterns if needed
 - Export the redacted copy to a separate file
 
 ## Export tables for spreadsheets
 
-- Choose `Tables Extract`
+- Open `Start Here`
+- Choose `Export Tables To Spreadsheet Files`
 - Select the report PDF
-- Choose CSV, XLSX, JSON, or All
+- Keep `All` or choose CSV, XLSX, or JSON
 - Save the results into a clean output folder
+
+## OCR scanned documents
+
+- Open `Start Here`
+- Choose `OCR Scanned Documents`
+- Select the scanned PDF
+- Save the searchable output copy
+- If OCR tools are missing, keep using the rest of the app and enable OCR later
 
 ## Watch a folder for new PDFs
 
-- Create a batch manifest
-- Choose `Watch Folder`
-- Point the app at an input folder and manifest
-- Leave the window running while new PDFs are processed
+- Open `Start Here`
+- Choose `Watch Incoming Folder`
+- Point the workflow at an intake folder
+- Confirm the default output folder and batch steps
+- Run it as a repeatable folder workflow, or reuse the setup later from `Repeat Last Task`

@@ -37,6 +37,8 @@ from pdf_toolkit.duplicates import remove_duplicate_pdfs
 from pdf_toolkit.environment import collect_doctor_status
 from pdf_toolkit.errors import ValidationError
 from pdf_toolkit.execution import run_mutation
+from pdf_toolkit.llm_analysis import DEFAULT_LLM_MODEL, analysis_output_paths, analyze_pdf_with_llm
+from pdf_toolkit.llm_extract import extract_for_llm, llm_output_paths
 from pdf_toolkit.ocr import run_ocr, scan_detect
 from pdf_toolkit.redaction import run_redaction
 from pdf_toolkit.tables import extract_tables_to_files
@@ -282,6 +284,9 @@ def prepare_request(
             value = _resolve_field_path(value, config)
         values[field_def.name] = value
 
+    if operation_id == "analyze-llm" and values.get("preset") == "qa" and _is_empty(values.get("question")):
+        raise ValidationError("Question is required when Preset is QA.")
+
     resolved_report = resolve_path(_as_path(report_path), config) if report_path else None
     return JobRequest(operation_id=operation_id, values=values, report_path=resolved_report, overwrite=overwrite)
 
@@ -479,6 +484,51 @@ def _extract_text_handler(request: JobRequest, config: ToolkitConfig) -> dict[st
         }
 
     return _run_mutating_job(request, config, input_paths=[input_path], planned_outputs=planned_outputs, action=action)
+
+
+def _extract_llm_handler(request: JobRequest, config: ToolkitConfig) -> dict[str, object]:
+    input_path = request.values["input_path"]
+    output_dir = request.values["output_dir"]
+    assert isinstance(input_path, Path)
+    assert isinstance(output_dir, Path)
+    return _run_mutating_job(
+        request,
+        config,
+        input_paths=[input_path],
+        planned_outputs=llm_output_paths(input_path, output_dir),
+        action=lambda: extract_for_llm(
+            input_path,
+            output_dir,
+            chunk_size=int(request.values["chunk_size"]),
+            overlap=int(request.values["overlap"]),
+            include_page_markers=bool(request.values["include_page_markers"]),
+            include_metadata=bool(request.values["include_metadata"]),
+        ),
+    )
+
+
+def _analyze_llm_handler(request: JobRequest, config: ToolkitConfig) -> dict[str, object]:
+    input_path = request.values["input_path"]
+    output_dir = request.values["output_dir"]
+    preset = str(request.values["preset"] or "summary")
+    question = request.values["question"]
+    model = str(request.values["model"] or DEFAULT_LLM_MODEL)
+    assert isinstance(input_path, Path)
+    assert isinstance(output_dir, Path)
+    return _run_mutating_job(
+        request,
+        config,
+        input_paths=[input_path],
+        planned_outputs=analysis_output_paths(input_path, output_dir, preset),
+        action=lambda: analyze_pdf_with_llm(
+            input_path,
+            output_dir,
+            preset=preset,
+            question=str(question) if question else None,
+            model=model,
+            overwrite_bundle=request.overwrite or config.overwrite,
+        ),
+    )
 
 
 def _protect_handler(request: JobRequest, config: ToolkitConfig) -> dict[str, object]:
@@ -930,6 +980,7 @@ def _build_registry() -> dict[str, _OperationRecord]:
                             _choice("tables", "Tables"),
                             _choice("batch", "Batch"),
                             _choice("render", "Render"),
+                            _choice("llm", "LLM"),
                         ],
                     )
                 ],
@@ -972,13 +1023,13 @@ def _build_registry() -> dict[str, _OperationRecord]:
         _OperationRecord(
             OperationDefinition(
                 id="merge",
-                label="Merge",
+                label="Combine PDFs",
                 category="Document",
                 input_mode="multiple",
-                description="Merge multiple PDFs into one document.",
+                description="Combine multiple PDFs into one clean document.",
                 fields=[
-                    _field("inputs", "Input PDFs", "file", required=True, multiple=True, path_role="input"),
-                    _field("output", "Output PDF", "file", required=True, path_role="output"),
+                    _field("inputs", "PDFs To Combine", "file", required=True, multiple=True, path_role="input"),
+                    _field("output", "Save Combined PDF As", "file", required=True, path_role="output"),
                 ],
                 supports_preview=True,
                 supports_report=True,
@@ -990,13 +1041,13 @@ def _build_registry() -> dict[str, _OperationRecord]:
         _OperationRecord(
             OperationDefinition(
                 id="split",
-                label="Split",
+                label="Split Pages",
                 category="Document",
                 input_mode="single",
-                description="Split by ranges or every page.",
+                description="Split one PDF by ranges or export every page separately.",
                 fields=[
-                    _field("input_path", "Input PDF", "file", required=True, path_role="input"),
-                    _field("output_dir", "Output Folder", "directory", required=True, path_role="output"),
+                    _field("input_path", "Source PDF", "file", required=True, path_role="input"),
+                    _field("output_dir", "Save Split Files To", "directory", required=True, path_role="output"),
                     _field("ranges", "Ranges", "text", placeholder="1-3,4-6"),
                     _field("every_page", "Every Page", "checkbox", default=False),
                 ],
@@ -1049,13 +1100,13 @@ def _build_registry() -> dict[str, _OperationRecord]:
         _OperationRecord(
             OperationDefinition(
                 id="extract-text",
-                label="Extract Text",
+                label="Export Text",
                 category="Text And Images",
                 input_mode="single",
-                description="Extract text to the UI or a file.",
+                description="Export PDF text to the app or a text file.",
                 fields=[
-                    _field("input_path", "Input PDF", "file", required=True, path_role="input"),
-                    _field("output", "Output Text File", "file", path_role="output"),
+                    _field("input_path", "Source PDF", "file", required=True, path_role="input"),
+                    _field("output", "Save Text File As", "file", path_role="output"),
                 ],
                 supports_preview=True,
                 supports_report=True,
@@ -1063,6 +1114,59 @@ def _build_registry() -> dict[str, _OperationRecord]:
                 preview_field="input_path",
             ),
             _extract_text_handler,
+        ),
+        _OperationRecord(
+            OperationDefinition(
+                id="extract-llm",
+                label="Extract For LLM",
+                category="Text And Images",
+                input_mode="single",
+                description="Extract Markdown, JSON, and chunk files optimized for LLM and embedding workflows.",
+                fields=[
+                    _field("input_path", "Input PDF", "file", required=True, path_role="input"),
+                    _field("output_dir", "Output Folder", "directory", required=True, path_role="output"),
+                    _field("chunk_size", "Chunk Size", "number", default=1200, number_mode="int", min_value=1),
+                    _field("overlap", "Overlap", "number", default=200, number_mode="int", min_value=0),
+                    _field("include_page_markers", "Include Page Markers", "checkbox", default=True),
+                    _field("include_metadata", "Include Metadata", "checkbox", default=True),
+                ],
+                supports_preview=True,
+                supports_report=True,
+                mutating=True,
+                preview_field="input_path",
+            ),
+            _extract_llm_handler,
+        ),
+        _OperationRecord(
+            OperationDefinition(
+                id="analyze-llm",
+                label="Analyze With LLM",
+                category="Text And Images",
+                input_mode="single",
+                description="Run optional OpenAI-powered analysis on a reusable local LLM bundle.",
+                fields=[
+                    _field("input_path", "Input PDF", "file", required=True, path_role="input"),
+                    _field("output_dir", "Output Folder", "directory", required=True, path_role="output"),
+                    _field(
+                        "preset",
+                        "Preset",
+                        "choice",
+                        default="summary",
+                        choices=[
+                            _choice("summary", "Summary"),
+                            _choice("entities", "Entities"),
+                            _choice("qa", "Q&A"),
+                        ],
+                    ),
+                    _field("question", "Question", "text", help="Required when Preset is Q&A."),
+                    _field("model", "Model", "text", default=DEFAULT_LLM_MODEL),
+                ],
+                supports_preview=True,
+                supports_report=True,
+                mutating=True,
+                preview_field="input_path",
+            ),
+            _analyze_llm_handler,
         ),
         _OperationRecord(
             OperationDefinition(
@@ -1428,13 +1532,13 @@ def _build_registry() -> dict[str, _OperationRecord]:
         _OperationRecord(
             OperationDefinition(
                 id="ocr",
-                label="OCR",
+                label="OCR Scans",
                 category="OCR And Redaction",
                 input_mode="single",
-                description="Run OCR on a PDF.",
+                description="Turn a scanned PDF into a searchable document.",
                 fields=[
-                    _field("input_path", "Input PDF", "file", required=True, path_role="input"),
-                    _field("output", "Output PDF", "file", required=True, path_role="output"),
+                    _field("input_path", "Source PDF", "file", required=True, path_role="input"),
+                    _field("output", "Save Searchable PDF As", "file", required=True, path_role="output"),
                     _field("language", "Language", "text", placeholder="eng"),
                     _field("skip_existing_text", "Skip Existing Text", "checkbox", default=False),
                     _field("text_output", "Text Output", "file", path_role="output"),
@@ -1476,13 +1580,13 @@ def _build_registry() -> dict[str, _OperationRecord]:
         _OperationRecord(
             OperationDefinition(
                 id="tables-extract",
-                label="Tables Extract",
+                label="Export Tables",
                 category="Text And Images",
                 input_mode="single",
-                description="Extract tables to structured files.",
+                description="Export detected tables into spreadsheet-friendly files.",
                 fields=[
-                    _field("input_path", "Input PDF", "file", required=True, path_role="input"),
-                    _field("output_dir", "Output Folder", "directory", required=True, path_role="output"),
+                    _field("input_path", "Source PDF", "file", required=True, path_role="input"),
+                    _field("output_dir", "Save Table Files To", "directory", required=True, path_role="output"),
                     _field("pages", "Pages", "page_spec"),
                     _field(
                         "format_name",
@@ -1503,10 +1607,10 @@ def _build_registry() -> dict[str, _OperationRecord]:
         _OperationRecord(
             OperationDefinition(
                 id="batch-run",
-                label="Batch Run",
+                label="Run Folder Workflow",
                 category="Automation",
                 input_mode="single",
-                description="Run a batch manifest.",
+                description="Run a repeatable workflow manifest for files or folders.",
                 fields=[_field("manifest_path", "Manifest", "file", required=True, path_role="input")],
                 supports_preview=False,
                 supports_report=True,
@@ -1517,10 +1621,10 @@ def _build_registry() -> dict[str, _OperationRecord]:
         _OperationRecord(
             OperationDefinition(
                 id="watch-folder",
-                label="Watch Folder",
+                label="Watch Incoming Folder",
                 category="Automation",
                 input_mode="directory",
-                description="Watch a folder and process new PDFs.",
+                description="Watch a folder and process new PDFs as they arrive.",
                 fields=[
                     _field("input_dir", "Input Folder", "directory", required=True, path_role="input"),
                     _field("manifest_path", "Manifest", "file", required=True, path_role="input"),

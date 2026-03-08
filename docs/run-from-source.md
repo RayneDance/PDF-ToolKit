@@ -21,6 +21,8 @@ Or:
 python -m pdf_toolkit
 ```
 
+When the app opens, use the `Start Here` screen to choose a workflow template or jump directly into combine, split, text export, tables, redaction, or folder automation.
+
 ## Build the packaged app
 
 ```powershell

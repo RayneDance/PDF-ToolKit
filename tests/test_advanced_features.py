@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 import shutil
 
 import fitz
@@ -9,6 +10,8 @@ import yaml
 from pdf_toolkit.batch import build_file_batch_manifest, build_folder_batch_manifest, process_watch_folder_once, run_batch, write_manifest
 from pdf_toolkit.config import load_config
 from pdf_toolkit.duplicates import remove_duplicate_pdfs, scan_duplicate_pdfs
+from pdf_toolkit.llm_analysis import analyze_pdf_with_llm
+from pdf_toolkit.llm_extract import extract_for_llm
 from pdf_toolkit.ocr import run_ocr, scan_detect
 from pdf_toolkit.redaction import parse_redaction_box, run_redaction
 from pdf_toolkit.tables import extract_tables_to_files
@@ -152,6 +155,120 @@ def test_extract_tables_to_files(table_pdf: Path, tmp_path: Path) -> None:
     assert any(path.suffix == ".json" for path in outputs)
 
 
+def test_extract_for_llm_writes_markdown_json_and_jsonl(sample_pdf: Path, tmp_path: Path) -> None:
+    result = extract_for_llm(sample_pdf, tmp_path / "llm")
+    outputs = [Path(path) if isinstance(path, str) else path for path in result["outputs"]]
+    assert {path.suffix for path in outputs} == {".md", ".json", ".jsonl"}
+
+    json_path = next(path for path in outputs if path.suffix == ".json")
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload["format"] == "pdf-toolkit-llm-bundle-v1"
+    assert payload["document"]["page_count"] == 3
+    assert payload["document"]["source_sha256"]
+    assert payload["document"]["extraction_quality"]["ocr_recommended"] is False
+    assert len(payload["pages"]) == 3
+    assert payload["sections"]
+    assert payload["chunks"]
+    assert payload["chunks"][0]["heading"]
+    assert payload["chunks"][0]["page_numbers"] == [1]
+    assert payload["chunks"][0]["retrieval_text"]
+    assert payload["chunks"][0]["citations"][0]["page_number"] == 1
+
+
+def test_extract_for_llm_marks_ocr_recommended_for_scanned_pdf(scanned_image_pdf: Path, tmp_path: Path) -> None:
+    result = extract_for_llm(scanned_image_pdf, tmp_path / "llm")
+    outputs = [Path(path) if isinstance(path, str) else path for path in result["outputs"]]
+    payload = json.loads(next(path for path in outputs if path.suffix == ".json").read_text(encoding="utf-8"))
+    quality = payload["document"]["extraction_quality"]
+    assert quality["ocr_recommended"] is True
+    assert quality["empty_pages"] == [1]
+    assert quality["image_only_pages"] == [1]
+
+
+def test_analyze_pdf_with_llm_writes_structured_outputs(sample_pdf: Path, tmp_path: Path, monkeypatch) -> None:
+    def fake_invoke(*, model, schema, instructions, input_text):
+        del model, instructions, input_text
+        if schema.__name__ == "SummaryAnalysis":
+            return schema(
+                executive_summary="Summary",
+                key_points=["Point"],
+                risks=["Risk"],
+                action_items=["Action"],
+                citations=[{"chunk_id": "sample-c001"}],
+            )
+        if schema.__name__ == "EntitiesAnalysis":
+            return schema(
+                people=[{"value": "Jeff", "citations": [{"chunk_id": "sample-c001"}]}],
+                organizations=[{"value": "PDF Toolkit", "citations": [{"chunk_id": "sample-c001"}]}],
+            )
+        return schema(
+            answer="Answer",
+            confidence="high",
+            follow_up_questions=["Next?"],
+            citations=[{"chunk_id": "sample-c001"}],
+        )
+
+    monkeypatch.setattr("pdf_toolkit.llm_analysis._invoke_structured_response", fake_invoke)
+
+    summary_result = analyze_pdf_with_llm(sample_pdf, tmp_path / "summary-root", preset="summary")
+    entities_result = analyze_pdf_with_llm(sample_pdf, tmp_path / "entities-root", preset="entities")
+    qa_result = analyze_pdf_with_llm(sample_pdf, tmp_path / "qa-root", preset="qa", question="What is in the PDF?")
+
+    for result in (summary_result, entities_result, qa_result):
+        outputs = [Path(path) if isinstance(path, str) else path for path in result["outputs"]]
+        assert {path.suffix for path in outputs} == {".json", ".md"}
+
+    summary_payload = json.loads((tmp_path / "summary-root" / "analysis" / "sample-summary.json").read_text(encoding="utf-8"))
+    entities_payload = json.loads((tmp_path / "entities-root" / "analysis" / "sample-entities.json").read_text(encoding="utf-8"))
+    qa_payload = json.loads((tmp_path / "qa-root" / "analysis" / "sample-qa.json").read_text(encoding="utf-8"))
+
+    assert summary_payload["result"]["citations"][0]["page_numbers"] == [1]
+    assert entities_payload["result"]["people"][0]["citations"][0]["chunk_id"] == "sample-c001"
+    assert qa_payload["result"]["confidence"] == "high"
+
+
+def test_analyze_pdf_with_llm_reuses_existing_bundle(sample_pdf: Path, tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "analysis-root"
+    extract_for_llm(sample_pdf, root / "llm")
+
+    def fake_invoke(*, model, schema, instructions, input_text):
+        del model, instructions, input_text
+        return schema(
+            executive_summary="Summary",
+            key_points=["Point"],
+            risks=[],
+            action_items=[],
+            citations=[{"chunk_id": "sample-c001"}],
+        )
+
+    monkeypatch.setattr("pdf_toolkit.llm_analysis._invoke_structured_response", fake_invoke)
+    result = analyze_pdf_with_llm(sample_pdf, root, preset="summary")
+    assert result["details"]["bundle_reused"] is True
+
+
+def test_analyze_pdf_with_llm_validates_qa_question(sample_pdf: Path, tmp_path: Path) -> None:
+    from pdf_toolkit.errors import ValidationError
+
+    try:
+        analyze_pdf_with_llm(sample_pdf, tmp_path / "qa-root", preset="qa")
+    except ValidationError as exc:
+        assert "Question is required" in str(exc)
+    else:
+        raise AssertionError("Expected ValidationError")
+
+
+def test_analyze_pdf_with_llm_requires_openai_api_key(sample_pdf: Path, tmp_path: Path, monkeypatch) -> None:
+    from pdf_toolkit.errors import DependencyMissingError
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    try:
+        analyze_pdf_with_llm(sample_pdf, tmp_path / "summary-root", preset="summary")
+    except DependencyMissingError as exc:
+        assert "OPENAI_API_KEY" in str(exc)
+    else:
+        raise AssertionError("Expected DependencyMissingError")
+
+
 def test_run_batch_generates_json_and_csv(sample_pdf: Path, table_pdf: Path, tmp_path: Path) -> None:
     input_root = tmp_path / "inputs"
     input_root.mkdir()
@@ -203,6 +320,56 @@ def test_build_folder_batch_manifest_runs_selected_steps(sample_pdf: Path, tmp_p
     assert any(Path(path).suffix == ".json" for path in result["outputs"])
     report = yaml.safe_load((output_root / "batch-report.json").read_text(encoding="utf-8"))
     assert report["jobs"][0]["status"] == "success"
+
+
+def test_build_folder_batch_manifest_runs_extract_llm_step(sample_pdf: Path, tmp_path: Path) -> None:
+    input_root = tmp_path / "incoming"
+    output_root = tmp_path / "processed"
+    input_root.mkdir()
+    shutil.copy2(sample_pdf, input_root / "a.pdf")
+    manifest = build_folder_batch_manifest(
+        input_root,
+        output_root,
+        steps=[{"action": "extract_llm", "chunk_size": 800, "overlap": 100}],
+        recursive_inputs=True,
+        file_patterns=["*.pdf"],
+        job_name="gui-folder-batch-llm",
+    )
+    manifest_path = write_manifest(tmp_path / "folder-batch-llm.yaml", manifest)
+    run_batch(manifest_path, load_config(tmp_path), overwrite=False)
+    llm_dir = output_root / "gui-folder-batch-llm" / "a" / "llm"
+    assert any(path.suffix == ".jsonl" for path in llm_dir.iterdir())
+
+
+def test_build_folder_batch_manifest_runs_analyze_llm_step(sample_pdf: Path, tmp_path: Path, monkeypatch) -> None:
+    input_root = tmp_path / "incoming"
+    output_root = tmp_path / "processed"
+    input_root.mkdir()
+    shutil.copy2(sample_pdf, input_root / "a.pdf")
+
+    def fake_invoke(*, model, schema, instructions, input_text):
+        del model, instructions, input_text
+        return schema(
+            executive_summary="Summary",
+            key_points=["Point"],
+            risks=[],
+            action_items=[],
+            citations=[{"chunk_id": "a-c001"}],
+        )
+
+    monkeypatch.setattr("pdf_toolkit.llm_analysis._invoke_structured_response", fake_invoke)
+    manifest = build_folder_batch_manifest(
+        input_root,
+        output_root,
+        steps=[{"action": "analyze_llm", "preset": "summary", "model": "gpt-5-mini"}],
+        recursive_inputs=True,
+        file_patterns=["*.pdf"],
+        job_name="gui-folder-batch-analyze-llm",
+    )
+    manifest_path = write_manifest(tmp_path / "folder-batch-analyze-llm.yaml", manifest)
+    run_batch(manifest_path, load_config(tmp_path), overwrite=False)
+    analysis_dir = output_root / "gui-folder-batch-analyze-llm" / "a" / "analysis"
+    assert any(path.suffix == ".json" for path in analysis_dir.iterdir())
 
 
 def test_run_batch_respects_non_recursive_inputs(sample_pdf: Path, tmp_path: Path) -> None:

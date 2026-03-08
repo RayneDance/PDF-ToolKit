@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import json
 import sys
+from typing import Any
 
 import fitz
 
@@ -102,6 +103,7 @@ from pdf_toolkit.branding import APP_NAME, APP_TAGLINE, APP_VERSION, DOCS_URL, O
 from pdf_toolkit.config import load_config
 from pdf_toolkit.errors import ValidationError
 from pdf_toolkit.environment import collect_doctor_status
+from pdf_toolkit.workflow_templates import WorkflowTemplate, get_workflow_template, get_workflow_templates
 
 PAGE_SPEC_VALIDATOR = QRegularExpressionValidator(QRegularExpression(r"^[0-9,\-\s]*$")) if QApplication is not None else None
 
@@ -156,14 +158,52 @@ def _panel_widget(title: str, body: QWidget, *, accent: str = "#204b57") -> QWid
     container = QFrame()
     container.setObjectName("PanelCard")
     layout = QVBoxLayout(container)
-    layout.setContentsMargins(16, 16, 16, 16)
-    layout.setSpacing(12)
+    layout.setContentsMargins(18, 18, 18, 18)
+    layout.setSpacing(14)
+    header = QFrame()
+    header.setObjectName("PanelHeader")
+    header_layout = QHBoxLayout(header)
+    header_layout.setContentsMargins(0, 0, 0, 0)
+    header_layout.setSpacing(10)
+    accent_bar = QFrame()
+    accent_bar.setObjectName("PanelAccent")
+    accent_bar.setFixedWidth(6)
+    title_stack = QVBoxLayout()
+    title_stack.setContentsMargins(0, 0, 0, 0)
+    title_stack.setSpacing(2)
+    eyebrow = QLabel("Workspace Zone")
+    eyebrow.setObjectName("PanelEyebrow")
     title_label = QLabel(title)
     title_label.setObjectName("PanelTitle")
     title_label.setProperty("accentColor", accent)
-    layout.addWidget(title_label)
+    title_stack.addWidget(eyebrow)
+    title_stack.addWidget(title_label)
+    header_layout.addWidget(accent_bar, 0)
+    header_layout.addLayout(title_stack, 1)
+    layout.addWidget(header)
     layout.addWidget(body, 1)
     return container
+
+
+def _clear_layout(layout) -> None:
+    while layout.count():
+        item = layout.takeAt(0)
+        widget = item.widget()
+        child_layout = item.layout()
+        if widget is not None:
+            widget.deleteLater()
+        elif child_layout is not None:
+            _clear_layout(child_layout)
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
 
 
 class SinglePathInput(QWidget):
@@ -178,7 +218,7 @@ class SinglePathInput(QWidget):
         self._line_edit = QLineEdit()
         self._browse_button = QPushButton("Browse")
         self._browse_button.clicked.connect(self._browse)
-        self._line_edit.textChanged.connect(self.changed.emit)
+        self._line_edit.textChanged.connect(lambda *_: self.changed.emit())
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._line_edit)
@@ -280,7 +320,7 @@ class MultiLineInput(QWidget):
         super().__init__()
         self._editor = QPlainTextEdit()
         self._editor.setPlaceholderText("One value per line")
-        self._editor.textChanged.connect(self.changed.emit)
+        self._editor.textChanged.connect(lambda: self.changed.emit())
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self._editor)
@@ -365,6 +405,25 @@ class FolderBatchBuilder(QWidget):
 
         self._compress = QCheckBox("Compress PDFs")
         self._extract_text = QCheckBox("Extract text files")
+        self._extract_llm = QCheckBox("Extract LLM bundle")
+        self._llm_chunk_size = QSpinBox()
+        self._llm_chunk_size.setRange(200, 20000)
+        self._llm_chunk_size.setValue(1200)
+        self._llm_overlap = QSpinBox()
+        self._llm_overlap.setRange(0, 5000)
+        self._llm_overlap.setValue(200)
+        self._llm_include_page_markers = QCheckBox("Keep page markers in chunks")
+        self._llm_include_page_markers.setChecked(True)
+        self._llm_include_metadata = QCheckBox("Include document metadata and bookmarks")
+        self._llm_include_metadata.setChecked(True)
+        self._analyze_llm = QCheckBox("Analyze with LLM")
+        self._llm_preset = QComboBox()
+        self._llm_preset.addItem("Summary", "summary")
+        self._llm_preset.addItem("Entities", "entities")
+        self._llm_preset.addItem("Q&A", "qa")
+        self._llm_question = QLineEdit()
+        self._llm_question.setPlaceholderText("Required for Q&A preset")
+        self._llm_model = QLineEdit("gpt-5-mini")
         self._render = QCheckBox("Render page images")
         self._render_dpi = QSpinBox()
         self._render_dpi.setRange(72, 600)
@@ -425,6 +484,15 @@ class FolderBatchBuilder(QWidget):
             self._job_name,
             self._compress,
             self._extract_text,
+            self._extract_llm,
+            self._llm_chunk_size,
+            self._llm_overlap,
+            self._llm_include_page_markers,
+            self._llm_include_metadata,
+            self._analyze_llm,
+            self._llm_preset,
+            self._llm_question,
+            self._llm_model,
             self._render,
             self._render_dpi,
             self._render_format,
@@ -443,13 +511,13 @@ class FolderBatchBuilder(QWidget):
             self._redact_label,
         ):
             if hasattr(widget, "textChanged"):
-                widget.textChanged.connect(self.changed.emit)
+                widget.textChanged.connect(lambda *_: self.changed.emit())
             elif hasattr(widget, "stateChanged"):
-                widget.stateChanged.connect(self.changed.emit)
+                widget.stateChanged.connect(lambda *_: self.changed.emit())
             elif hasattr(widget, "valueChanged"):
-                widget.valueChanged.connect(self.changed.emit)
+                widget.valueChanged.connect(lambda *_: self.changed.emit())
             elif hasattr(widget, "currentIndexChanged"):
-                widget.currentIndexChanged.connect(self.changed.emit)
+                widget.currentIndexChanged.connect(lambda *_: self.changed.emit())
 
     def _build_general_section(self) -> QWidget:
         section = QFrame()
@@ -486,6 +554,18 @@ class FolderBatchBuilder(QWidget):
 
         layout.addWidget(self._compress)
         layout.addWidget(self._extract_text)
+
+        llm_form = QFormLayout()
+        llm_form.addRow(self._extract_llm, QWidget())
+        llm_form.addRow("Chunk Size", self._llm_chunk_size)
+        llm_form.addRow("Chunk Overlap", self._llm_overlap)
+        llm_form.addRow("", self._llm_include_page_markers)
+        llm_form.addRow("", self._llm_include_metadata)
+        llm_form.addRow(self._analyze_llm, QWidget())
+        llm_form.addRow("Analysis Preset", self._llm_preset)
+        llm_form.addRow("Question", self._llm_question)
+        llm_form.addRow("Model", self._llm_model)
+        layout.addLayout(llm_form)
 
         render_form = QFormLayout()
         render_form.addRow(self._render, QWidget())
@@ -539,6 +619,25 @@ class FolderBatchBuilder(QWidget):
             steps.append({"action": "compress"})
         if self._extract_text.isChecked():
             steps.append({"action": "extract_text"})
+        if self._extract_llm.isChecked():
+            steps.append(
+                {
+                    "action": "extract_llm",
+                    "chunk_size": self._llm_chunk_size.value(),
+                    "overlap": self._llm_overlap.value(),
+                    "include_page_markers": self._llm_include_page_markers.isChecked(),
+                    "include_metadata": self._llm_include_metadata.isChecked(),
+                }
+            )
+        if self._analyze_llm.isChecked():
+            steps.append(
+                {
+                    "action": "analyze_llm",
+                    "preset": self._llm_preset.currentData(),
+                    "question": self._llm_question.text().strip() or None,
+                    "model": self._llm_model.text().strip() or "gpt-5-mini",
+                }
+            )
         if self._render.isChecked():
             steps.append(
                 {
@@ -595,6 +694,100 @@ class FolderBatchBuilder(QWidget):
             "job_name": self._job_name.text().strip() or "folder-batch",
             "steps": steps,
         }
+
+    def set_value(self, values: dict[str, object] | None) -> None:
+        payload = dict(values or {})
+        mode = str(payload.get("source_mode", "folder"))
+        mode_index = self._source_mode.findData(mode)
+        self._source_mode.setCurrentIndex(mode_index if mode_index >= 0 else 0)
+        self._input_dir.set_value(payload.get("input_root"))
+        self._input_files.set_value(payload.get("input_files", []))
+        self._output_dir.set_value(payload.get("output_root"))
+        self._report_path.set_value(payload.get("report_path"))
+        file_patterns = payload.get("file_patterns", ["*.pdf"])
+        first_pattern = file_patterns[0] if isinstance(file_patterns, list) and file_patterns else "*.pdf"
+        self._pattern.setText(str(first_pattern or "*.pdf"))
+        self._recursive.setChecked(bool(payload.get("recursive_inputs", True)))
+        self._fail_fast.setChecked(bool(payload.get("fail_fast", False)))
+        self._job_name.setText(str(payload.get("job_name", "folder-batch")))
+
+        self._compress.setChecked(False)
+        self._extract_text.setChecked(False)
+        self._extract_llm.setChecked(False)
+        self._llm_chunk_size.setValue(1200)
+        self._llm_overlap.setValue(200)
+        self._llm_include_page_markers.setChecked(True)
+        self._llm_include_metadata.setChecked(True)
+        self._analyze_llm.setChecked(False)
+        self._llm_preset.setCurrentIndex(max(self._llm_preset.findData("summary"), 0))
+        self._llm_question.clear()
+        self._llm_model.setText("gpt-5-mini")
+        self._render.setChecked(False)
+        self._render_dpi.setValue(150)
+        self._render_format.setCurrentIndex(max(self._render_format.findData("png"), 0))
+        self._ocr.setChecked(False)
+        self._ocr_language.setText("eng")
+        self._ocr_skip_text.setChecked(True)
+        self._ocr_force.setChecked(False)
+        self._tables.setChecked(False)
+        self._tables_format.setCurrentIndex(max(self._tables_format.findData("csv"), 0))
+        self._tables_ocr_first.setChecked(False)
+        self._metadata.setChecked(False)
+        self._metadata_values.set_value({})
+        self._redact.setChecked(False)
+        self._redact_patterns.set_value([])
+        self._redact_regex.setChecked(False)
+        self._redact_case_sensitive.setChecked(False)
+        self._redact_pages.clear()
+        self._redact_label.clear()
+
+        for step in list(payload.get("steps", [])):
+            if not isinstance(step, dict):
+                continue
+            action = str(step.get("action", ""))
+            if action == "compress":
+                self._compress.setChecked(True)
+            elif action == "extract_text":
+                self._extract_text.setChecked(True)
+            elif action == "extract_llm":
+                self._extract_llm.setChecked(True)
+                self._llm_chunk_size.setValue(int(step.get("chunk_size", 1200)))
+                self._llm_overlap.setValue(int(step.get("overlap", 200)))
+                self._llm_include_page_markers.setChecked(bool(step.get("include_page_markers", True)))
+                self._llm_include_metadata.setChecked(bool(step.get("include_metadata", True)))
+            elif action == "analyze_llm":
+                self._analyze_llm.setChecked(True)
+                preset_index = self._llm_preset.findData(step.get("preset", "summary"))
+                self._llm_preset.setCurrentIndex(preset_index if preset_index >= 0 else 0)
+                self._llm_question.setText(str(step.get("question", "") or ""))
+                self._llm_model.setText(str(step.get("model", "gpt-5-mini")))
+            elif action == "render":
+                self._render.setChecked(True)
+                self._render_dpi.setValue(int(step.get("dpi", 150)))
+                render_index = self._render_format.findData(step.get("image_format", "png"))
+                self._render_format.setCurrentIndex(render_index if render_index >= 0 else 0)
+            elif action == "ocr":
+                self._ocr.setChecked(True)
+                self._ocr_language.setText(str(step.get("language", "eng")))
+                self._ocr_skip_text.setChecked(bool(step.get("skip_existing_text", True)))
+                self._ocr_force.setChecked(bool(step.get("force", False)))
+            elif action == "tables_extract":
+                self._tables.setChecked(True)
+                table_index = self._tables_format.findData(step.get("format", "csv"))
+                self._tables_format.setCurrentIndex(table_index if table_index >= 0 else 0)
+                self._tables_ocr_first.setChecked(bool(step.get("ocr_first", False)))
+            elif action == "set_metadata":
+                self._metadata.setChecked(True)
+                values_map = step.get("values", {})
+                self._metadata_values.set_value(values_map if isinstance(values_map, dict) else {})
+            elif action == "redact":
+                self._redact.setChecked(True)
+                patterns = step.get("patterns", [])
+                self._redact_patterns.set_value(patterns if isinstance(patterns, list) else [])
+                self._redact_regex.setChecked(bool(step.get("regex", False)))
+                self._redact_case_sensitive.setChecked(bool(step.get("case_sensitive", False)))
+                self._redact_pages.setText(str(step.get("pages", "") or ""))
+                self._redact_label.setText(str(step.get("label", "") or ""))
 
 
 class RedactionPreviewLabel(QLabel):
@@ -900,65 +1093,228 @@ class DiagnosticsWidget(QTableWidget):
             items[3].setForeground(status_color)
 
 
-class WelcomePanel(QFrame):
+class StartHerePanel(QFrame):
     workflow_requested = Signal(str)
+    template_requested = Signal(str)
+    repeat_requested = Signal()
 
-    def __init__(self) -> None:
+    def __init__(self, templates: list[WorkflowTemplate]) -> None:
         super().__init__()
         self.setObjectName("WelcomePanel")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
-        layout.setSpacing(10)
+        self._templates = templates
+        self._template_map = {template.id: template for template in templates}
+        self._recent_output_paths: list[str] = []
 
-        eyebrow = QLabel("Windows-first desktop workflow kit")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(22, 22, 22, 22)
+        layout.setSpacing(14)
+
+        eyebrow = QLabel("Start Here")
         eyebrow.setObjectName("WelcomeEyebrow")
-        title = QLabel(APP_NAME)
+        title = QLabel("Get a real result in under a minute")
         title.setObjectName("WelcomeTitle")
         self.summary = QLabel(WELCOME_COPY)
         self.summary.setWordWrap(True)
         self.summary.setObjectName("MutedLabel")
-        note = QLabel(OCR_NOTE)
-        note.setWordWrap(True)
-        note.setObjectName("WelcomeNote")
+        self._readiness = QLabel("Ready now")
+        self._readiness.setObjectName("ResultPill")
+        self._readiness_detail = QLabel("Core PDF tools are ready. Optional add-ons can be installed later.")
+        self._readiness_detail.setWordWrap(True)
+        self._readiness_detail.setObjectName("MutedLabel")
 
         layout.addWidget(eyebrow)
         layout.addWidget(title)
         layout.addWidget(self.summary)
+        layout.addWidget(self._readiness)
+        layout.addWidget(self._readiness_detail)
 
-        actions = QHBoxLayout()
-        actions.setSpacing(8)
-        shortcuts = [
-            ("Merge files", "merge"),
-            ("Split pages", "split"),
-            ("Extract text", "extract-text"),
-            ("OCR add-on", "ocr"),
-        ]
-        for label, operation_id in shortcuts:
+        quick_row = QHBoxLayout()
+        quick_row.setSpacing(8)
+        for label, operation_id in (
+            ("Combine PDFs", "merge"),
+            ("Split Pages", "split"),
+            ("Redact PII", "redact"),
+            ("Export Text", "extract-text"),
+            ("Export Tables", "tables-extract"),
+            ("Folder Workflow", "batch-run"),
+        ):
             button = QPushButton(label)
             button.setProperty("secondary", True)
             button.clicked.connect(lambda _checked=False, op=operation_id: self.workflow_requested.emit(op))
-            actions.addWidget(button)
-        actions.addStretch(1)
+            quick_row.addWidget(button)
+        quick_row.addStretch(1)
+        layout.addLayout(quick_row)
+
+        template_frame = QFrame()
+        template_frame.setObjectName("InnerSection")
+        template_layout = QHBoxLayout(template_frame)
+        template_layout.setContentsMargins(14, 14, 14, 14)
+        template_layout.setSpacing(14)
+        self._template_list = QListWidget()
+        self._template_list.setMaximumWidth(250)
+        self._template_list.currentRowChanged.connect(self._update_template_details)
+        for template in self._templates:
+            self._template_list.addItem(template.label)
+        template_layout.addWidget(self._template_list)
+
+        detail_column = QVBoxLayout()
+        detail_column.setContentsMargins(0, 0, 0, 0)
+        detail_column.setSpacing(8)
+        self._template_eyebrow = QLabel("Workflow Template")
+        self._template_eyebrow.setObjectName("CardEyebrow")
+        self._template_title = QLabel()
+        self._template_title.setObjectName("SectionTitle")
+        self._template_description = QLabel()
+        self._template_description.setWordWrap(True)
+        self._template_description.setObjectName("MutedLabel")
+        self._template_hint = QLabel()
+        self._template_hint.setWordWrap(True)
+        self._template_hint.setObjectName("MetricPill")
+        self._template_note = QLabel()
+        self._template_note.setWordWrap(True)
+        self._template_note.setObjectName("WelcomeNote")
+        self._template_note.setVisible(False)
+        included_label = QLabel("Included now: merge, split, preview, extraction, tables, metadata, and automation.")
+        included_label.setWordWrap(True)
+        included_label.setObjectName("MutedLabel")
+        optional_label = QLabel("Optional add-ons: OCR tools and OpenAI-powered LLM analysis.")
+        optional_label.setWordWrap(True)
+        optional_label.setObjectName("MutedLabel")
+        self._template_apply_button = QPushButton("Use Template")
+        self._template_apply_button.clicked.connect(self._emit_current_template)
+        detail_column.addWidget(self._template_eyebrow)
+        detail_column.addWidget(self._template_title)
+        detail_column.addWidget(self._template_description)
+        detail_column.addWidget(self._template_hint)
+        detail_column.addWidget(self._template_note)
+        detail_column.addWidget(included_label)
+        detail_column.addWidget(optional_label)
+        detail_column.addWidget(self._template_apply_button)
+        detail_column.addStretch(1)
+        template_layout.addLayout(detail_column, 1)
+        layout.addWidget(template_frame)
+
+        recent_frame = QFrame()
+        recent_frame.setObjectName("InnerSection")
+        recent_layout = QVBoxLayout(recent_frame)
+        recent_layout.setContentsMargins(14, 14, 14, 14)
+        recent_layout.setSpacing(8)
+        recent_title = QLabel("Recent Activity")
+        recent_title.setObjectName("FieldLabel")
+        self._recent_task = QLabel("No recent task yet. Use a template or choose a workflow to get started.")
+        self._recent_task.setWordWrap(True)
+        self._recent_task.setObjectName("MutedLabel")
+        self._recent_inputs = QLabel("Recent files will appear here after your first successful run.")
+        self._recent_inputs.setWordWrap(True)
+        self._recent_inputs.setObjectName("MutedLabel")
+        self._repeat_button = QPushButton("Repeat Last Task")
+        self._repeat_button.setProperty("secondary", True)
+        self._repeat_button.setEnabled(False)
+        self._repeat_button.clicked.connect(self.repeat_requested.emit)
+        self._recent_output_links = QHBoxLayout()
+        self._recent_output_links.setContentsMargins(0, 0, 0, 0)
+        self._recent_output_links.setSpacing(8)
+        recent_layout.addWidget(recent_title)
+        recent_layout.addWidget(self._recent_task)
+        recent_layout.addWidget(self._recent_inputs)
+        recent_layout.addWidget(self._repeat_button)
+        recent_layout.addLayout(self._recent_output_links)
+        layout.addWidget(recent_frame)
 
         links = QHBoxLayout()
         links.setSpacing(10)
-        docs_button = QPushButton("Open docs")
+        docs_button = QPushButton("Open Docs")
         docs_button.setProperty("secondary", True)
         docs_button.clicked.connect(lambda: _open_url(DOCS_URL))
-        releases_button = QPushButton("Windows download")
+        releases_button = QPushButton("Windows Download")
         releases_button.clicked.connect(lambda: _open_url(RELEASES_URL))
         links.addWidget(docs_button)
         links.addWidget(releases_button)
         links.addStretch(1)
-
-        layout.addLayout(actions)
-        layout.addWidget(note)
         layout.addLayout(links)
+
+        if self._templates:
+            self._template_list.setCurrentRow(0)
+
+    def _emit_current_template(self) -> None:
+        current_row = self._template_list.currentRow()
+        if current_row < 0 or current_row >= len(self._templates):
+            return
+        self.template_requested.emit(self._templates[current_row].id)
+
+    def _update_template_details(self, row: int) -> None:
+        if row < 0 or row >= len(self._templates):
+            self._template_title.clear()
+            self._template_description.clear()
+            self._template_hint.clear()
+            self._template_note.clear()
+            self._template_note.setVisible(False)
+            self._template_apply_button.setEnabled(False)
+            return
+        template = self._templates[row]
+        self._template_title.setText(template.label)
+        self._template_description.setText(template.description)
+        self._template_hint.setText(template.output_hint or "Template fills practical defaults for this task.")
+        if template.dependency_note:
+            self._template_note.setText(template.dependency_note)
+            self._template_note.setVisible(True)
+        else:
+            self._template_note.clear()
+            self._template_note.setVisible(False)
+        self._template_apply_button.setEnabled(True)
+        self._template_apply_button.setText(f"Use {template.label}")
+
+    def select_template(self, template_id: str) -> None:
+        for index, template in enumerate(self._templates):
+            if template.id == template_id:
+                self._template_list.setCurrentRow(index)
+                return
+
+    def set_readiness(self, title: str, detail: str) -> None:
+        self._readiness.setText(title)
+        self._readiness_detail.setText(detail)
+
+    def set_recent_activity(self, recent_run: dict[str, Any] | None) -> None:
+        self._repeat_button.setEnabled(bool(recent_run))
+        _clear_layout(self._recent_output_links)
+        if not recent_run:
+            self._recent_task.setText("No recent task yet. Use a template or choose a workflow to get started.")
+            self._recent_inputs.setText("Recent files will appear here after your first successful run.")
+            return
+
+        self._recent_task.setText(f"Last task: {recent_run.get('label', 'Workflow')} ready to repeat.")
+        input_paths = [str(path) for path in list(recent_run.get("input_paths", []))[:3]]
+        if input_paths:
+            input_names = ", ".join(Path(path).name for path in input_paths)
+            self._recent_inputs.setText(f"Recent files: {input_names}")
+        else:
+            self._recent_inputs.setText("No recent input files were captured for the last successful task.")
+
+        for folder in list(recent_run.get("output_dirs", []))[:3]:
+            folder_path = Path(str(folder))
+            button = QPushButton(folder_path.name or str(folder_path))
+            button.setProperty("secondary", True)
+            button.clicked.connect(lambda _checked=False, target=folder_path: _open_path(target))
+            self._recent_output_links.addWidget(button)
+        self._recent_output_links.addStretch(1)
 
 
 class ResultsPanel(QWidget):
     def __init__(self) -> None:
         super().__init__()
+        self._headline = QLabel("No run yet")
+        self._headline.setObjectName("ResultTitle")
+        self._meta = QLabel("Choose a template or workflow, then run it to populate outputs, diagnostics, and logs.")
+        self._meta.setObjectName("MutedLabel")
+        self._status_pill = QLabel("Idle")
+        self._status_pill.setObjectName("ResultPill")
+        self._count_pill = QLabel("0 outputs")
+        self._count_pill.setObjectName("MetricPill")
+        self._time_pill = QLabel("0 ms")
+        self._time_pill.setObjectName("MetricPill")
+        self._primary_output: Path | None = None
+        self._output_folder: Path | None = None
+        self._report_path: Path | None = None
         self.preview = PdfPreviewWidget()
         self.details = StructuredDetailsWidget()
         self.outputs = QListWidget()
@@ -975,19 +1331,93 @@ class ResultsPanel(QWidget):
         self.outputs.setAlternatingRowColors(True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(12)
+        header = QFrame()
+        header.setObjectName("ResultsHero")
+        header_layout = QVBoxLayout(header)
+        header_layout.setContentsMargins(18, 18, 18, 18)
+        header_layout.setSpacing(10)
+        pill_row = QHBoxLayout()
+        pill_row.setContentsMargins(0, 0, 0, 0)
+        pill_row.setSpacing(8)
+        pill_row.addWidget(self._status_pill)
+        pill_row.addWidget(self._count_pill)
+        pill_row.addWidget(self._time_pill)
+        pill_row.addStretch(1)
+        action_row = QHBoxLayout()
+        action_row.setContentsMargins(0, 0, 0, 0)
+        action_row.setSpacing(8)
+        self._open_primary_button = QPushButton("Open Primary Output")
+        self._open_primary_button.setProperty("secondary", True)
+        self._open_primary_button.setEnabled(False)
+        self._open_primary_button.clicked.connect(self._open_primary_output)
+        self._open_folder_button = QPushButton("Open Output Folder")
+        self._open_folder_button.setProperty("secondary", True)
+        self._open_folder_button.setEnabled(False)
+        self._open_folder_button.clicked.connect(self._open_output_folder)
+        self._open_report_button = QPushButton("Open Report")
+        self._open_report_button.setProperty("secondary", True)
+        self._open_report_button.setEnabled(False)
+        self._open_report_button.clicked.connect(self._open_report)
+        action_row.addWidget(self._open_primary_button)
+        action_row.addWidget(self._open_folder_button)
+        action_row.addWidget(self._open_report_button)
+        action_row.addStretch(1)
+        header_layout.addWidget(self._headline)
+        header_layout.addWidget(self._meta)
+        header_layout.addLayout(pill_row)
+        header_layout.addLayout(action_row)
+        layout.addWidget(header)
         layout.addWidget(self.tabs)
         self.diagnostics.refresh()
 
     def append_log(self, message: str) -> None:
         self.log.appendPlainText(message)
 
-    def set_result(self, result: JobResult, report_path: Path | None = None) -> None:
+    def _open_primary_output(self) -> None:
+        if self._primary_output is not None:
+            _open_path(self._primary_output)
+
+    def _open_output_folder(self) -> None:
+        if self._output_folder is not None:
+            _open_path(self._output_folder)
+
+    def _open_report(self) -> None:
+        if self._report_path is not None:
+            _open_path(self._report_path)
+
+    def set_result(self, result: JobResult, report_path: Path | None = None, *, display_label: str | None = None) -> None:
         self.details.set_payload(result.details)
         self.outputs.clear()
         for output in result.outputs:
             self.outputs.addItem(str(output))
         if report_path is not None:
             self.outputs.addItem(str(report_path))
+        self._headline.setText(display_label or result.operation_id.replace("-", " ").title())
+        self._primary_output = result.outputs[0] if result.outputs else report_path
+        self._report_path = report_path
+        if result.outputs:
+            self._output_folder = result.outputs[0].parent
+        elif report_path is not None:
+            self._output_folder = report_path.parent
+        else:
+            self._output_folder = None
+
+        if result.status == "success":
+            destination = str(self._output_folder) if self._output_folder is not None else "the selected output location"
+            self._meta.setText(
+                f"Task completed successfully. {len(result.outputs)} output(s) saved"
+                + (" plus a report file " if report_path is not None else " ")
+                + f"to {destination}."
+            )
+        else:
+            self._meta.setText("The last run needs attention. Review the details, outputs, and diagnostics before trying again.")
+        self._status_pill.setText("Completed" if result.status == "success" else "Needs Attention")
+        self._count_pill.setText(f"{len(result.outputs)} outputs")
+        self._time_pill.setText(f"{result.duration_ms} ms")
+        self._open_primary_button.setEnabled(self._primary_output is not None)
+        self._open_folder_button.setEnabled(self._output_folder is not None)
+        self._open_report_button.setEnabled(report_path is not None)
         pdf_output = next((path for path in result.outputs if path.suffix.lower() == ".pdf"), None)
         if pdf_output is not None:
             self.preview.load_pdf(pdf_output)
@@ -1086,28 +1516,109 @@ class MainWindow(QMainWindow):
         self._watch_controller.changed.connect(self._sync_watch_state)
         self._definitions = get_operation_definitions()
         self._definition_map = {definition.id: definition for definition in self._definitions}
+        self._templates = get_workflow_templates()
         self._operation_items: dict[str, QTreeWidgetItem] = {}
         self._category_items: dict[str, QTreeWidgetItem] = {}
         self._current_definition: OperationDefinition | None = None
         self._field_widgets: dict[str, object] = {}
         self._watch_active = False
+        self._last_request_context: dict[str, Any] | None = None
+        self._recent_runs = self._load_recent_runs()
         self._build_ui()
         self._populate_operation_tree()
         self._select_initial_operation()
+        self._refresh_start_here()
+        self._update_readiness()
 
     def _build_ui(self) -> None:
+        shell = QWidget()
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(18, 18, 18, 18)
+        shell_layout.setSpacing(16)
+        shell_layout.addWidget(self._build_shell_header())
         splitter = QSplitter()
         splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(10)
         splitter.addWidget(self._build_left_pane())
         splitter.addWidget(self._build_center_pane())
         splitter.addWidget(self._build_right_pane())
         splitter.setSizes([320, 560, 800])
-        self.setCentralWidget(splitter)
+        shell_layout.addWidget(splitter, 1)
+        self.setCentralWidget(shell)
         self._build_menu()
         refresh_action = QAction("Refresh Diagnostics", self)
         refresh_action.triggered.connect(self._results.diagnostics.refresh)
         self.menuBar().addAction(refresh_action)
         self.statusBar().showMessage(f"{APP_NAME} {APP_VERSION} ready")
+
+    def _build_shell_header(self) -> QWidget:
+        header = QFrame()
+        header.setObjectName("ShellHeader")
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(26, 22, 26, 22)
+        layout.setSpacing(22)
+
+        copy_column = QVBoxLayout()
+        copy_column.setContentsMargins(0, 0, 0, 0)
+        copy_column.setSpacing(8)
+        eyebrow = QLabel("Office-grade PDF command center")
+        eyebrow.setObjectName("ShellEyebrow")
+        title = QLabel(APP_NAME)
+        title.setObjectName("ShellTitle")
+        tagline = QLabel(APP_TAGLINE)
+        tagline.setObjectName("MutedLabel")
+        metrics = QHBoxLayout()
+        metrics.setContentsMargins(0, 0, 0, 0)
+        metrics.setSpacing(8)
+        self._header_operation_metric = QLabel("0 workflows")
+        self._header_operation_metric.setObjectName("MetricPill")
+        self._header_optional_metric = QLabel("OCR + LLM optional")
+        self._header_optional_metric.setObjectName("MetricPill")
+        self._header_status_metric = QLabel("Desktop ready")
+        self._header_status_metric.setObjectName("StatusBadge")
+        metrics.addWidget(self._header_operation_metric)
+        metrics.addWidget(self._header_optional_metric)
+        metrics.addWidget(self._header_status_metric)
+        metrics.addStretch(1)
+        copy_column.addWidget(eyebrow)
+        copy_column.addWidget(title)
+        copy_column.addWidget(tagline)
+        copy_column.addLayout(metrics)
+
+        action_column = QVBoxLayout()
+        action_column.setContentsMargins(0, 0, 0, 0)
+        action_column.setSpacing(10)
+        links = QHBoxLayout()
+        links.setContentsMargins(0, 0, 0, 0)
+        links.setSpacing(8)
+        for label, callback in (
+            ("Documentation", lambda: _open_url(DOCS_URL)),
+            ("Windows Releases", lambda: _open_url(RELEASES_URL)),
+            ("Project Page", lambda: _open_url(PROJECT_URL)),
+        ):
+            button = QPushButton(label)
+            button.setProperty("secondary", True)
+            button.clicked.connect(callback)
+            links.addWidget(button)
+        shortcuts = QHBoxLayout()
+        shortcuts.setContentsMargins(0, 0, 0, 0)
+        shortcuts.setSpacing(8)
+        for label, operation_id in (
+            ("Combine PDFs", "merge"),
+            ("Split Pages", "split"),
+            ("Export Text", "extract-text"),
+            ("Export Tables", "tables-extract"),
+            ("Watch Folder", "batch-run"),
+        ):
+            button = QPushButton(label)
+            button.clicked.connect(lambda _checked=False, op=operation_id: self._select_operation(op))
+            shortcuts.addWidget(button)
+        action_column.addLayout(links)
+        action_column.addLayout(shortcuts)
+
+        layout.addLayout(copy_column, 1)
+        layout.addLayout(action_column)
+        return header
 
     def _build_menu(self) -> None:
         help_menu = self.menuBar().addMenu("&Help")
@@ -1127,7 +1638,7 @@ class MainWindow(QMainWindow):
 
     def _build_left_pane(self) -> QWidget:
         self._operation_search = QLineEdit()
-        self._operation_search.setPlaceholderText("Search operations")
+        self._operation_search.setPlaceholderText("Search tasks and workflows")
         self._operation_search.textChanged.connect(self._filter_operations)
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
@@ -1138,6 +1649,11 @@ class MainWindow(QMainWindow):
         body = QWidget()
         layout = QVBoxLayout(body)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        helper = QLabel("Browse every task by category, or start from a bundled template to prefill the next job.")
+        helper.setWordWrap(True)
+        helper.setObjectName("MutedLabel")
+        layout.addWidget(helper)
         layout.addWidget(self._operation_search)
         layout.addWidget(self._tree)
         self._operation_count = QLabel()
@@ -1146,15 +1662,26 @@ class MainWindow(QMainWindow):
         return _panel_widget("Operations", body, accent="#d46a3a")
 
     def _build_center_pane(self) -> QWidget:
-        self._welcome_panel = WelcomePanel()
-        self._welcome_panel.workflow_requested.connect(self._select_operation)
+        self._start_here_panel = StartHerePanel(self._templates)
+        self._start_here_panel.workflow_requested.connect(self._select_operation)
+        self._start_here_panel.template_requested.connect(self._apply_template)
+        self._start_here_panel.repeat_requested.connect(self._repeat_last_task)
+        self._welcome_panel = self._start_here_panel
+        self._operation_eyebrow = QLabel("Selected Workflow")
+        self._operation_eyebrow.setObjectName("CardEyebrow")
         self._title = QLabel()
         self._title.setObjectName("HeroTitle")
         self._description = QLabel()
         self._description.setWordWrap(True)
         self._description.setObjectName("MutedLabel")
-        self._summary = QLabel("Choose an operation, fill the fields, then run it.")
+        self._summary = QLabel("Choose a task or template, confirm the destination, then run it.")
         self._summary.setObjectName("SummaryPill")
+        self._mode_chip = QLabel("Writes files")
+        self._mode_chip.setObjectName("MetricPill")
+        self._support_chip = QLabel("Preview ready")
+        self._support_chip.setObjectName("MetricPill")
+        self._report_chip = QLabel("Report export")
+        self._report_chip.setObjectName("MetricPill")
         self._form_host = QWidget()
         self._form_host.setObjectName("FormHost")
         self._form_layout = QFormLayout(self._form_host)
@@ -1179,24 +1706,50 @@ class MainWindow(QMainWindow):
         scroll.setObjectName("FormScroll")
         scroll.setWidgetResizable(True)
         scroll.setWidget(self._form_host)
+        operation_card = QFrame()
+        operation_card.setObjectName("OperationHero")
+        operation_layout = QVBoxLayout(operation_card)
+        operation_layout.setContentsMargins(20, 20, 20, 20)
+        operation_layout.setSpacing(10)
+        chip_row = QHBoxLayout()
+        chip_row.setContentsMargins(0, 0, 0, 0)
+        chip_row.setSpacing(8)
+        chip_row.addWidget(self._mode_chip)
+        chip_row.addWidget(self._support_chip)
+        chip_row.addWidget(self._report_chip)
+        chip_row.addStretch(1)
+        operation_layout.addWidget(self._operation_eyebrow)
+        operation_layout.addWidget(self._title)
+        operation_layout.addWidget(self._description)
+        operation_layout.addLayout(chip_row)
+        operation_layout.addWidget(self._summary)
+        parameter_header = QLabel("Operation Parameters")
+        parameter_header.setObjectName("SectionTitle")
+        parameter_caption = QLabel("Confirm the source files, output location, and practical defaults before you run the task.")
+        parameter_caption.setObjectName("MutedLabel")
+        footer_card = QFrame()
+        footer_card.setObjectName("ActionBarCard")
+        footer_layout = QVBoxLayout(footer_card)
+        footer_layout.setContentsMargins(18, 18, 18, 18)
+        footer_layout.setSpacing(10)
+        footer_layout.addWidget(self._report_label)
+        footer_layout.addWidget(self._report_input)
+        footer_layout.addLayout(controls)
         body = QWidget()
         layout = QVBoxLayout(body)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-        layout.addWidget(self._welcome_panel)
-        layout.addWidget(self._title)
-        layout.addWidget(self._description)
-        layout.addWidget(self._summary)
-        layout.addWidget(QLabel("Operation Parameters"))
+        layout.setSpacing(14)
+        layout.addWidget(self._start_here_panel)
+        layout.addWidget(operation_card)
+        layout.addWidget(parameter_header)
+        layout.addWidget(parameter_caption)
         layout.addWidget(scroll, 1)
-        layout.addWidget(self._report_label)
-        layout.addWidget(self._report_input)
-        layout.addLayout(controls)
-        return _panel_widget("Workspace", body)
+        layout.addWidget(footer_card)
+        return _panel_widget("Workspace", body, accent="#59b7a7")
 
     def _build_right_pane(self) -> QWidget:
         self._results = ResultsPanel()
-        return _panel_widget("Results", self._results, accent="#2f6b57")
+        return _panel_widget("Results Deck", self._results, accent="#e08b49")
 
     def _populate_operation_tree(self) -> None:
         for definition in self._definitions:
@@ -1204,6 +1757,9 @@ class MainWindow(QMainWindow):
             if parent is None:
                 parent = QTreeWidgetItem([definition.category])
                 parent.setFlags(parent.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+                category_font = QFont("Segoe UI", 10)
+                category_font.setBold(True)
+                parent.setFont(0, category_font)
                 self._category_items[definition.category] = parent
                 self._tree.addTopLevelItem(parent)
             child = QTreeWidgetItem([definition.label])
@@ -1239,11 +1795,19 @@ class MainWindow(QMainWindow):
     def _set_current_operation(self, operation_id: str) -> None:
         definition = self._definition_map[operation_id]
         self._current_definition = definition
+        self._operation_eyebrow.setText("Selected Task")
         self._title.setText(definition.label)
         self._description.setText(definition.description)
-        mode_text = "Writes files" if definition.mutating else "Read only"
-        optional_text = " - OCR add-on required" if definition.id == "ocr" else ""
-        self._summary.setText(f"{definition.category} - {mode_text}{optional_text}")
+        mode_text = "Creates output files" if definition.mutating else "Read-only inspection"
+        optional_text = ""
+        if definition.id == "ocr":
+            optional_text = " OCR add-on optional."
+        elif definition.id == "analyze-llm":
+            optional_text = " OpenAI API key optional."
+        self._summary.setText(f"{definition.category} task. {mode_text}.{optional_text}")
+        self._mode_chip.setText(mode_text)
+        self._support_chip.setText("Preview ready" if definition.supports_preview else "No preview")
+        self._report_chip.setText("Report export" if definition.supports_report else "No report file")
         self._run_button.setText("Start Watch" if definition.id == "watch-folder" else "Run")
         show_global_report = definition.supports_report and definition.id != "batch-run"
         self._report_label.setVisible(show_global_report)
@@ -1262,7 +1826,7 @@ class MainWindow(QMainWindow):
         if definition.id == "batch-run":
             builder = FolderBatchBuilder(self._settings)
             self._field_widgets["manifest_path"] = builder
-            label = QLabel("Folder Batch Setup")
+            label = QLabel("Template Or Batch Setup")
             label.setObjectName("FieldLabel")
             self._form_layout.addRow(label, builder)
             return
@@ -1330,6 +1894,44 @@ class MainWindow(QMainWindow):
             widget.changed.connect(self._refresh_preview)
         return widget
 
+    def _set_widget_value(self, widget: object, value: Any) -> None:
+        if isinstance(widget, (SinglePathInput, MultiPathInput, MultiLineInput, KeyValueTableInput, RedactionBoxEditor, FolderBatchBuilder)):
+            widget.set_value(value)
+        elif isinstance(widget, QComboBox):
+            index = widget.findData(value)
+            if index < 0 and value is not None:
+                index = widget.findText(str(value))
+            if index >= 0:
+                widget.setCurrentIndex(index)
+        elif isinstance(widget, QCheckBox):
+            widget.setChecked(bool(value))
+        elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+            if value not in (None, ""):
+                widget.setValue(value)
+        elif isinstance(widget, QLineEdit):
+            widget.setText("" if value in (None, []) else str(value))
+
+    def _apply_values_to_current_form(self, values: dict[str, Any], *, report_path: str | None = None) -> None:
+        for field_name, value in values.items():
+            widget = self._field_widgets.get(field_name)
+            if widget is None:
+                continue
+            self._set_widget_value(widget, value)
+        if report_path is not None and self._report_input.isVisible():
+            self._report_input.set_value(report_path)
+        self._refresh_preview()
+
+    def _apply_template(self, template_id: str) -> None:
+        template = get_workflow_template(template_id)
+        self._start_here_panel.select_template(template_id)
+        self._select_operation(template.operation_id)
+        if template.target == "batch":
+            self._apply_values_to_current_form({"manifest_path": template.values})
+        else:
+            self._apply_values_to_current_form(template.values)
+        self._summary.setText(f"Template loaded: {template.label}. {template.description}")
+        self.statusBar().showMessage(f"Loaded template: {template.label}")
+
     def _filter_operations(self, text: str) -> None:
         query = text.strip().lower()
         for operation_id, item in self._operation_items.items():
@@ -1345,7 +1947,9 @@ class MainWindow(QMainWindow):
 
     def _update_operation_count(self) -> None:
         visible_count = sum(1 for item in self._operation_items.values() if not item.isHidden())
-        self._operation_count.setText(f"{visible_count} operation{'s' if visible_count != 1 else ''}")
+        self._operation_count.setText(f"{visible_count} task{'s' if visible_count != 1 else ''}")
+        if hasattr(self, "_header_operation_metric"):
+            self._header_operation_metric.setText(f"{visible_count} workflows")
 
     def _collect_values(self) -> dict[str, object]:
         if self._current_definition is None:
@@ -1431,11 +2035,23 @@ class MainWindow(QMainWindow):
                 return
         if self._current_definition.id == "watch-folder" and not values.get("once"):
             try:
+                self._last_request_context = {
+                    "operation_id": "watch-folder",
+                    "label": self._current_definition.label,
+                    "values": _json_safe(values),
+                    "report_path": report_path,
+                }
                 request = prepare_request("watch-folder", values, overwrite=self._overwrite.isChecked())
                 self._watch_controller.start(request.values["input_dir"], request.values["manifest_path"], bool(request.values["recursive"]), request.overwrite)
             except Exception as exc:
                 QMessageBox.critical(self, "Watch Error", str(exc))
             return
+        self._last_request_context = {
+            "operation_id": self._current_definition.id,
+            "label": self._current_definition.label,
+            "values": _json_safe(values),
+            "report_path": report_path,
+        }
         self._run_button.setEnabled(False)
         self.statusBar().showMessage(f"Running {self._current_definition.label}...")
         worker = JobWorker(
@@ -1450,14 +2066,20 @@ class MainWindow(QMainWindow):
 
     def _handle_result(self, result: JobResult, report_path: Path | None) -> None:
         self._run_button.setEnabled(True)
-        self._results.set_result(result, report_path)
+        display_label = self._current_definition.label if self._current_definition is not None else None
+        self._results.set_result(result, report_path, display_label=display_label)
         if result.status == "error":
             self.statusBar().showMessage(f"{result.operation_id} failed")
+            self._update_readiness(last_run_failed=True)
             message = result.error or "Unknown error"
             if result.operation_id == "ocr":
                 message = f"{message}\n\nOCR is optional. You can keep using the rest of the toolkit without installing OCR tools."
+            if result.operation_id == "analyze-llm":
+                message = f"{message}\n\nLLM analysis is optional. Set OPENAI_API_KEY to enable OpenAI-powered analysis."
             QMessageBox.critical(self, "Operation Failed", message)
             return
+        self._remember_successful_run(result, report_path)
+        self._update_readiness(last_run_failed=False)
         preview_path = next((path for path in result.outputs if path.suffix.lower() == ".pdf"), None)
         if preview_path is None:
             self._refresh_preview()
@@ -1471,6 +2093,95 @@ class MainWindow(QMainWindow):
         self._watch_active = active
         self._stop_watch_button.setEnabled(active)
         self._run_button.setEnabled(not active)
+
+    def _load_recent_runs(self) -> list[dict[str, Any]]:
+        raw = self._settings.value("history/recent_runs", "[]")
+        try:
+            data = json.loads(str(raw))
+        except Exception:
+            return []
+        return [item for item in data if isinstance(item, dict)]
+
+    def _persist_recent_runs(self) -> None:
+        self._settings.setValue("history/recent_runs", json.dumps(self._recent_runs))
+
+    def _refresh_start_here(self) -> None:
+        latest = self._recent_runs[0] if self._recent_runs else None
+        self._start_here_panel.set_recent_activity(latest)
+
+    def _remember_successful_run(self, result: JobResult, report_path: Path | None) -> None:
+        if not self._last_request_context:
+            return
+        context = dict(self._last_request_context)
+        values = dict(context.get("values", {}))
+        input_paths: list[str] = []
+        operation_id = str(context.get("operation_id", "") or "")
+        if operation_id == "batch-run":
+            source_mode = str(values.get("source_mode", "folder") or "folder")
+            if source_mode == "files":
+                input_paths.extend(str(path) for path in values.get("input_files", []) if str(path).strip())
+            else:
+                input_root = values.get("input_root")
+                if input_root and str(input_root).strip():
+                    input_paths.append(str(input_root))
+        elif self._current_definition is not None:
+            for field_def in self._current_definition.fields:
+                if field_def.kind not in {"file", "directory"}:
+                    continue
+                raw = values.get(field_def.name)
+                if raw in (None, "", [], {}):
+                    continue
+                items = raw if isinstance(raw, list) else [raw]
+                if field_def.path_role == "input":
+                    input_paths.extend(str(item) for item in items if str(item).strip())
+        output_dirs = sorted({str(path.parent) for path in [*result.outputs, *([report_path] if report_path is not None else [])]})
+        entry = {
+            "operation_id": context.get("operation_id"),
+            "label": context.get("label"),
+            "values": values,
+            "report_path": context.get("report_path"),
+            "input_paths": input_paths,
+            "output_dirs": output_dirs,
+        }
+        filtered = [item for item in self._recent_runs if item.get("operation_id") != entry["operation_id"] or item.get("values") != entry["values"]]
+        self._recent_runs = [entry, *filtered][:6]
+        self._persist_recent_runs()
+        self._refresh_start_here()
+
+    def _repeat_last_task(self) -> None:
+        if not self._recent_runs:
+            return
+        latest = self._recent_runs[0]
+        operation_id = str(latest.get("operation_id", "") or "")
+        if not operation_id:
+            return
+        self._select_operation(operation_id)
+        values = latest.get("values", {})
+        if isinstance(values, dict):
+            if operation_id == "batch-run":
+                self._apply_values_to_current_form({"manifest_path": values}, report_path=latest.get("report_path"))
+            else:
+                self._apply_values_to_current_form(values, report_path=latest.get("report_path"))
+        self.statusBar().showMessage(f"Repeated last task setup: {latest.get('label', operation_id)}")
+
+    def _update_readiness(self, *, last_run_failed: bool | None = None) -> None:
+        statuses = collect_doctor_status("all")
+        required_missing = [status for status in statuses if status.required and not status.available]
+        optional_missing = [status for status in statuses if not status.required and not status.available]
+        if last_run_failed:
+            title = "Last run needs attention"
+            detail = "The previous task failed. Review the results panel, then rerun when ready."
+        elif required_missing:
+            title = "Setup required"
+            detail = "Some core dependencies are missing. Review diagnostics before running core workflows."
+        elif optional_missing:
+            title = "Ready now"
+            detail = "Core PDF workflows are ready. Optional add-ons like OCR and LLM analysis can be installed later."
+        else:
+            title = "Ready now"
+            detail = "Everything in the current build is available, including optional add-ons."
+        self._header_status_metric.setText(title)
+        self._start_here_panel.set_readiness(title, detail)
 
     def closeEvent(self, event) -> None:  # pragma: no cover - Qt close handling
         self._watch_controller.stop()
@@ -1506,163 +2217,215 @@ def create_app() -> QApplication:
     app.setStyleSheet(
         """
         QMainWindow {
-            background: #09131a;
+            background: #071017;
         }
         QMenuBar, QStatusBar {
-            background: #0d1a22;
-            color: #d7ecff;
+            background: #0a161e;
+            color: #f4efe4;
+            border: none;
         }
         QLabel {
-            color: #d7ecff;
+            color: #f4efe4;
+        }
+        QLabel#ShellEyebrow, QLabel#PanelEyebrow, QLabel#CardEyebrow, QLabel#WelcomeEyebrow {
+            color: #f0b96a;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+        }
+        QLabel#ShellTitle {
+            font-family: "Bahnschrift";
+            font-size: 34px;
+            font-weight: 700;
+            color: #fff7eb;
         }
         QLabel#HeroTitle {
-            font-size: 28px;
+            font-family: "Bahnschrift";
+            font-size: 30px;
             font-weight: 700;
-            color: #f4fbff;
+            color: #fff7eb;
         }
         QLabel#MutedLabel {
-            color: #8ca8bc;
+            color: #97a8ab;
         }
         QLabel#SummaryPill {
-            background: #132a33;
-            color: #66f0c9;
-            border: 1px solid #1d4d5b;
-            border-radius: 14px;
-            padding: 8px 12px;
+            background: rgba(240, 185, 106, 0.12);
+            color: #ffdca8;
+            border: 1px solid rgba(240, 185, 106, 0.35);
+            border-radius: 16px;
+            padding: 10px 14px;
             font-weight: 600;
         }
         QLabel#FieldLabel {
-            color: #bfe4ff;
+            color: #f4efe4;
             font-weight: 600;
         }
-        QLabel#WelcomeEyebrow {
-            color: #72e0a0;
-            font-size: 12px;
-            font-weight: 700;
-            text-transform: uppercase;
-        }
         QLabel#WelcomeTitle {
-            color: #f4fbff;
-            font-size: 24px;
+            font-family: "Bahnschrift";
+            color: #fff7eb;
+            font-size: 26px;
             font-weight: 700;
         }
         QLabel#WelcomeNote {
-            color: #ffd166;
+            color: #ffcf8d;
             font-weight: 600;
-        }
-        QFrame#PanelCard {
-            background: #0f1d26;
-            border: 1px solid #1d3442;
-            border-radius: 18px;
-        }
-        QFrame#WelcomePanel {
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #143242, stop:1 #0d1a22);
-            border: 1px solid #2d5a6c;
-            border-radius: 16px;
-        }
-        QFrame#InnerSection {
-            background: #12222d;
-            border: 1px solid #214153;
-            border-radius: 12px;
         }
         QLabel#PanelTitle {
-            font-size: 16px;
+            font-family: "Bahnschrift";
+            font-size: 18px;
             font-weight: 700;
-            color: #ffd166;
+            color: #fff7eb;
         }
-        QWidget#FormHost, QScrollArea#FormScroll, QScrollArea#FormScroll > QWidget > QWidget {
-            background: #0f1d26;
+        QLabel#SectionTitle, QLabel#ResultTitle {
+            font-family: "Bahnschrift";
+            font-size: 18px;
+            font-weight: 700;
+            color: #fff7eb;
         }
-        QPushButton {
-            background: #00c2ff;
-            color: #05131a;
-            padding: 8px 14px;
-            border: none;
-            border-radius: 8px;
+        QLabel#MetricPill {
+            background: rgba(255, 255, 255, 0.05);
+            color: #f4efe4;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 15px;
+            padding: 7px 12px;
             font-weight: 600;
         }
+        QLabel#StatusBadge, QLabel#ResultPill {
+            background: rgba(89, 183, 167, 0.18);
+            color: #9ff3e8;
+            border: 1px solid rgba(89, 183, 167, 0.42);
+            border-radius: 15px;
+            padding: 7px 12px;
+            font-weight: 700;
+        }
+        QFrame#PanelCard {
+            background: #0d1820;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 24px;
+        }
+        QFrame#PanelHeader {
+            background: transparent;
+            border: none;
+        }
+        QFrame#PanelAccent {
+            background: #f0b96a;
+            border-radius: 3px;
+        }
+        QFrame#ShellHeader {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #122430, stop:0.55 #0f1c25, stop:1 #1f2d22);
+            border: 1px solid rgba(240, 185, 106, 0.22);
+            border-radius: 24px;
+        }
+        QFrame#OperationHero, QFrame#ResultsHero, QFrame#ActionBarCard {
+            background: #101c24;
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            border-radius: 20px;
+        }
+        QFrame#WelcomePanel {
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1f3544, stop:0.45 #16222a, stop:1 #263224);
+            border: 1px solid rgba(240, 185, 106, 0.18);
+            border-radius: 22px;
+        }
+        QFrame#InnerSection {
+            background: #13202a;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+        }
+        QWidget#FormHost, QScrollArea#FormScroll, QScrollArea#FormScroll > QWidget > QWidget {
+            background: transparent;
+        }
+        QPushButton {
+            background: #f0b96a;
+            color: #15110a;
+            padding: 10px 16px;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            font-weight: 700;
+        }
         QPushButton:hover {
-            background: #5ad7ff;
+            background: #ffd095;
         }
         QPushButton[secondary="true"] {
-            background: #19303d;
-            color: #d7ecff;
-            border: 1px solid #2d5a6c;
+            background: #17242d;
+            color: #f4efe4;
+            border: 1px solid rgba(255, 255, 255, 0.09);
         }
         QPushButton[secondary="true"]:hover {
-            background: #234252;
+            background: #213441;
         }
         QPushButton:disabled {
-            background: #385160;
-            color: #90a8b8;
+            background: #2a3640;
+            color: #748287;
         }
         QTreeWidget, QListWidget, QTableWidget, QPlainTextEdit, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-            background: #142632;
-            color: #e8f6ff;
-            border: 1px solid #26485b;
-            border-radius: 10px;
-            padding: 4px;
-            alternate-background-color: #18303d;
-            gridline-color: #26485b;
-            selection-background-color: #ff4d8d;
-            selection-color: #ffffff;
+            background: #14212a;
+            color: #f4efe4;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 6px;
+            alternate-background-color: #192833;
+            gridline-color: rgba(255, 255, 255, 0.08);
+            selection-background-color: #de7c4b;
+            selection-color: #fff7eb;
         }
         QTableWidget::item {
             padding: 4px;
         }
         QHeaderView::section {
-            background: #19303d;
-            color: #8cf0ff;
+            background: #1b2b35;
+            color: #f0b96a;
             border: none;
-            border-bottom: 1px solid #26485b;
-            padding: 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 8px;
             font-weight: 600;
         }
         QTabWidget::pane {
-            border: 1px solid #26485b;
-            border-radius: 12px;
-            background: #12222d;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 16px;
+            background: #101c24;
         }
         QTabBar::tab {
-            background: #18313f;
-            color: #8ca8bc;
-            padding: 8px 14px;
-            margin-right: 4px;
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
+            background: #15232c;
+            color: #97a8ab;
+            padding: 10px 16px;
+            margin-right: 6px;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
         }
         QTabBar::tab:selected {
-            background: #ff4d8d;
-            color: #ffffff;
+            background: #f0b96a;
+            color: #15110a;
         }
         QCheckBox {
-            color: #d7ecff;
+            color: #f4efe4;
             spacing: 8px;
         }
         QCheckBox::indicator {
             width: 16px;
             height: 16px;
             border-radius: 4px;
-            border: 1px solid #3a6278;
-            background: #142632;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            background: #14212a;
         }
         QCheckBox::indicator:checked {
-            background: #7cff6b;
-            border: 1px solid #7cff6b;
+            background: #59b7a7;
+            border: 1px solid #59b7a7;
         }
         QScrollBar:vertical {
-            background: #10202a;
+            background: #0c151b;
             width: 12px;
             border-radius: 6px;
         }
         QScrollBar::handle:vertical {
-            background: #ffb703;
+            background: #f0b96a;
             border-radius: 6px;
             min-height: 30px;
         }
         QSplitter::handle {
-            background: #1e3949;
-            width: 8px;
+            background: #132029;
+            border-radius: 4px;
+            width: 10px;
         }
         """
     )

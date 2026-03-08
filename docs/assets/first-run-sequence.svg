@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" fill="none">
+  <rect width="1200" height="420" rx="28" fill="#071017"/>
+  <rect x="24" y="24" width="1152" height="372" rx="22" fill="#0B1720" stroke="#17303C"/>
+  <text x="58" y="70" fill="#F0B96A" font-family="Segoe UI, sans-serif" font-size="18" font-weight="700" letter-spacing="3">FIRST-RUN FLOW</text>
+  <text x="58" y="108" fill="#FFF7EB" font-family="Bahnschrift, Segoe UI, sans-serif" font-size="34" font-weight="700">Install, choose a template, run, and find the output</text>
+  <text x="58" y="138" fill="#97A8AB" font-family="Segoe UI, sans-serif" font-size="18">A Windows-first desktop workflow for repeatable PDF jobs. No account wall. No cloud setup required.</text>
+
+  <g transform="translate(52 182)">
+    <rect width="252" height="170" rx="18" fill="#10222D" stroke="#21404E"/>
+    <circle cx="42" cy="40" r="18" fill="#E08B49"/>
+    <path d="M34 40h16M42 32v16" stroke="#071017" stroke-width="4" stroke-linecap="round"/>
+    <text x="26" y="82" fill="#FFF7EB" font-family="Segoe UI, sans-serif" font-size="22" font-weight="700">1. Install</text>
+    <text x="26" y="110" fill="#C6D6D9" font-family="Segoe UI, sans-serif" font-size="16">Run the Windows installer</text>
+    <text x="26" y="132" fill="#C6D6D9" font-family="Segoe UI, sans-serif" font-size="16">and launch PDF Toolkit</text>
+    <rect x="26" y="144" width="116" height="12" rx="6" fill="#21404E"/>
+  </g>
+
+  <g transform="translate(338 182)">
+    <rect width="252" height="170" rx="18" fill="#10222D" stroke="#21404E"/>
+    <circle cx="42" cy="40" r="18" fill="#59B7A7"/>
+    <path d="M34 40h16" stroke="#071017" stroke-width="4" stroke-linecap="round"/>
+    <text x="26" y="82" fill="#FFF7EB" font-family="Segoe UI, sans-serif" font-size="22" font-weight="700">2. Start Here</text>
+    <text x="26" y="110" fill="#C6D6D9" font-family="Segoe UI, sans-serif" font-size="16">Pick a workflow template</text>
+    <text x="26" y="132" fill="#C6D6D9" font-family="Segoe UI, sans-serif" font-size="16">with sane defaults</text>
+    <rect x="26" y="144" width="164" height="12" rx="6" fill="#21404E"/>
+  </g>
+
+  <g transform="translate(624 182)">
+    <rect width="252" height="170" rx="18" fill="#10222D" stroke="#21404E"/>
+    <circle cx="42" cy="40" r="18" fill="#F0B96A"/>
+    <path d="M35 44l6-8 8 10 10-16" stroke="#071017" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="26" y="82" fill="#FFF7EB" font-family="Segoe UI, sans-serif" font-size="22" font-weight="700">3. Run Task</text>
+    <text x="26" y="110" fill="#C6D6D9" font-family="Segoe UI, sans-serif" font-size="16">Confirm inputs and outputs,</text>
+    <text x="26" y="132" fill="#C6D6D9" font-family="Segoe UI, sans-serif" font-size="16">then execute locally</text>
+    <rect x="26" y="144" width="134" height="12" rx="6" fill="#21404E"/>
+  </g>
+
+  <g transform="translate(910 182)">
+    <rect width="236" height="170" rx="18" fill="#10222D" stroke="#21404E"/>
+    <circle cx="42" cy="40" r="18" fill="#7CCF83"/>
+    <path d="M34 40l6 6 12-14" stroke="#071017" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="26" y="82" fill="#FFF7EB" font-family="Segoe UI, sans-serif" font-size="22" font-weight="700">4. Open Results</text>
+    <text x="26" y="110" fill="#C6D6D9" font-family="Segoe UI, sans-serif" font-size="16">Open the file, output folder,</text>
+    <text x="26" y="132" fill="#C6D6D9" font-family="Segoe UI, sans-serif" font-size="16">or rerun from recent history</text>
+    <rect x="26" y="144" width="174" height="12" rx="6" fill="#21404E"/>
+  </g>
+
+  <path d="M304 267h24M590 267h24M876 267h24" stroke="#38596B" stroke-width="4" stroke-linecap="round"/>
+</svg>

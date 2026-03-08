@@ -14,6 +14,8 @@ from watchdog.observers import Observer
 from pdf_toolkit.config import ToolkitConfig
 from pdf_toolkit.core import compress_pdf, ensure_dir, extract_text, inspect_pdf, render_pdf, set_metadata
 from pdf_toolkit.errors import ValidationError
+from pdf_toolkit.llm_analysis import DEFAULT_LLM_MODEL, analyze_pdf_with_llm
+from pdf_toolkit.llm_extract import extract_for_llm
 from pdf_toolkit.ocr import run_ocr
 from pdf_toolkit.redaction import run_redaction
 from pdf_toolkit.reporting import write_batch_csv, write_json
@@ -169,6 +171,29 @@ def _run_step(step: dict[str, object], current_pdf: Path, base_output_dir: Path,
         destination = base_output_dir / f"{current_pdf.stem}.txt"
         destination.write_text(extract_text(current_pdf), encoding="utf-8")
         return current_pdf, [str(destination)]
+
+    if action == "extract_llm":
+        llm_dir = base_output_dir / "llm"
+        result = extract_for_llm(
+            current_pdf,
+            llm_dir,
+            chunk_size=int(step.get("chunk_size", 1200)),
+            overlap=int(step.get("overlap", 200)),
+            include_page_markers=bool(step.get("include_page_markers", True)),
+            include_metadata=bool(step.get("include_metadata", True)),
+        )
+        return current_pdf, [str(path) for path in result["outputs"]]
+
+    if action == "analyze_llm":
+        result = analyze_pdf_with_llm(
+            current_pdf,
+            base_output_dir,
+            preset=str(step.get("preset", "summary")),
+            question=str(step.get("question")).strip() if step.get("question") else None,
+            model=str(step.get("model", DEFAULT_LLM_MODEL)),
+            overwrite_bundle=True,
+        )
+        return current_pdf, [str(path) for path in result["outputs"]]
 
     if action == "tables_extract":
         table_dir = base_output_dir / "tables"

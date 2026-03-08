@@ -23,6 +23,9 @@ jobs:
       - name: Run tests
         run: python -m pytest
 
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
       - name: Build GUI package
         run: powershell -ExecutionPolicy Bypass -File scripts/build_gui.ps1
 
@@ -43,4 +46,5 @@ jobs:
           body_path: .github/release-template.md
           files: |
             dist/release/pdf-toolkit-windows-x64.zip
+            dist/release/pdf-toolkit-setup-windows-x64.exe
             dist/release/pdf-toolkit-windows-x64-checksums.txt

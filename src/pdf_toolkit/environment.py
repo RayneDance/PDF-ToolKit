@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
+import os
 import shutil
 import sys
 
@@ -67,7 +68,7 @@ def resolve_command_path(name: str, aliases: tuple[str, ...] = ()) -> str | None
     return None
 
 
-def _check_python_module(name: str, remediation: str) -> DependencyStatus:
+def _check_python_module(name: str, remediation: str, *, required: bool = True) -> DependencyStatus:
     available = find_spec(name) is not None
     return DependencyStatus(
         name=name,
@@ -75,7 +76,7 @@ def _check_python_module(name: str, remediation: str) -> DependencyStatus:
         available=available,
         detail="installed" if available else "missing",
         remediation=remediation,
-        required=True,
+        required=required,
     )
 
 
@@ -87,6 +88,19 @@ def _check_command(name: str, remediation: str, aliases: tuple[str, ...] = (), *
         category="command",
         available=available,
         detail=f"resolved to {resolved}" if available else "not found on PATH or in bundled tools",
+        remediation=remediation,
+        required=required,
+    )
+
+
+def _check_environment_variable(name: str, remediation: str, *, required: bool = True) -> DependencyStatus:
+    value = os.getenv(name, "").strip()
+    available = bool(value)
+    return DependencyStatus(
+        name=name,
+        category="environment",
+        available=available,
+        detail="set" if available else "missing",
         remediation=remediation,
         required=required,
     )
@@ -122,6 +136,14 @@ def collect_doctor_status(feature_set: str = "all") -> list[DependencyStatus]:
         )
     if feature_set in {"all", "render"}:
         statuses.append(_check_command("pdftoppm", "Install Poppler or bundle it in `vendor/bin`.", required=False))
+    if feature_set in {"all", "llm"}:
+        statuses.extend(
+            [
+                _check_python_module("openai", "Install with `python -m pip install openai`.", required=False),
+                _check_python_module("pydantic", "Install with `python -m pip install pydantic`.", required=False),
+                _check_environment_variable("OPENAI_API_KEY", "Set OPENAI_API_KEY to enable OpenAI-powered analysis.", required=False),
+            ]
+        )
     return statuses
 
 
