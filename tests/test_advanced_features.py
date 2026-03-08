@@ -269,6 +269,21 @@ def test_analyze_pdf_with_llm_requires_openai_api_key(sample_pdf: Path, tmp_path
         raise AssertionError("Expected DependencyMissingError")
 
 
+def test_analyze_pdf_with_llm_rejects_empty_scan_context(scanned_image_pdf: Path, tmp_path: Path, monkeypatch) -> None:
+    from pdf_toolkit.errors import ValidationError
+
+    def fail_if_called(**kwargs):
+        raise AssertionError("LLM invocation should not run for empty extraction bundles")
+
+    monkeypatch.setattr("pdf_toolkit.llm_analysis._invoke_structured_response", fail_if_called)
+    try:
+        analyze_pdf_with_llm(scanned_image_pdf, tmp_path / "scan-summary-root", preset="summary")
+    except ValidationError as exc:
+        assert "run OCR first" in str(exc)
+    else:
+        raise AssertionError("Expected ValidationError for scan-heavy PDF with no extractable text")
+
+
 def test_run_batch_generates_json_and_csv(sample_pdf: Path, table_pdf: Path, tmp_path: Path) -> None:
     input_root = tmp_path / "inputs"
     input_root.mkdir()

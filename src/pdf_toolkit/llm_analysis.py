@@ -160,6 +160,24 @@ def _render_chunk_context(chunks: list[dict[str, object]]) -> str:
     return "\n\n---\n\n".join(part for part in parts if part).strip()
 
 
+def _ensure_chunks_available(bundle: dict[str, object], *, preset: str) -> list[dict[str, object]]:
+    chunks = [chunk for chunk in list(bundle.get("chunks", [])) if str(chunk.get("text") or chunk.get("retrieval_text") or "").strip()]
+    if chunks:
+        return chunks
+
+    quality = dict(bundle.get("document", {}).get("extraction_quality", {}))
+    ocr_recommended = bool(quality.get("ocr_recommended"))
+    if ocr_recommended:
+        raise ValidationError(
+            f"No extractable text was found for LLM {preset} analysis. "
+            "This document appears to be scan-heavy; run OCR first, then try again."
+        )
+    raise ValidationError(
+        f"No extractable text was found for LLM {preset} analysis. "
+        "Use a PDF with embedded text or run OCR first."
+    )
+
+
 def _section_chunk_groups(bundle: dict[str, object], *, token_limit: int) -> list[list[dict[str, object]]]:
     sections = list(bundle.get("sections", []))
     chunks = list(bundle.get("chunks", []))
@@ -396,7 +414,7 @@ def _run_summary_or_entities(
     preset: str,
 ) -> tuple[BaseModel, str]:
     schema = _response_schema_for_preset(preset)
-    chunks = list(bundle.get("chunks", []))
+    chunks = _ensure_chunks_available(bundle, preset=preset)
     total_tokens = _token_estimate_for_chunks(chunks)
     instructions = _base_instructions(preset)
 
@@ -438,6 +456,7 @@ def _run_summary_or_entities(
 
 
 def _run_qa(bundle: dict[str, object], *, model: str, question: str) -> tuple[BaseModel, str, list[dict[str, object]]]:
+    _ensure_chunks_available(bundle, preset="qa")
     ranked_chunks = _rank_chunks_for_question(bundle, question)
     parsed = _invoke_structured_response(
         model=model,

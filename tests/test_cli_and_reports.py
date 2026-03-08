@@ -69,12 +69,53 @@ def test_redact_dry_run_report(sample_pdf: Path, tmp_path: Path) -> None:
 
 def test_doctor_returns_dependency_exit_code() -> None:
     result = runner.invoke(app, ["doctor", "--feature", "ocr"])
-    assert result.exit_code in {0, 3}
+    assert result.exit_code == 0
 
 
 def test_doctor_llm_returns_dependency_exit_code() -> None:
     result = runner.invoke(app, ["doctor", "--feature", "llm"])
-    assert result.exit_code in {0, 3}
+    assert result.exit_code == 0
+
+
+def test_doctor_all_ignores_optional_missing(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "pdf_toolkit.cli._run_cli",
+        lambda command, values, **kwargs: {
+            "feature": values["feature"],
+            "statuses": [
+                {"name": "pypdf", "category": "python", "available": True, "required": True, "remediation": ""},
+                {
+                    "name": "OPENAI_API_KEY",
+                    "category": "environment",
+                    "available": False,
+                    "required": False,
+                    "remediation": "Set OPENAI_API_KEY to enable analysis.",
+                },
+            ],
+        },
+    )
+    result = runner.invoke(app, ["doctor", "--feature", "all"])
+    assert result.exit_code == 0
+
+
+def test_doctor_required_missing_returns_exit_code(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "pdf_toolkit.cli._run_cli",
+        lambda command, values, **kwargs: {
+            "feature": values["feature"],
+            "statuses": [
+                {
+                    "name": "pypdf",
+                    "category": "python",
+                    "available": False,
+                    "required": True,
+                    "remediation": "Install pypdf.",
+                }
+            ],
+        },
+    )
+    result = runner.invoke(app, ["doctor", "--feature", "all"])
+    assert result.exit_code == 3
 
 
 def test_extract_llm_writes_bundle_and_report(sample_pdf: Path, tmp_path: Path) -> None:

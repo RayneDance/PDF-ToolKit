@@ -54,14 +54,14 @@ def _render_table(title: str, columns: list[str], rows: list[list[str]]) -> None
 def doctor_command(feature: str = typer.Option("all", help="Dependency set to validate: all, ocr, redaction, tables, batch, render, llm.")) -> None:
     details = _run_cli("doctor", {"feature": feature})
     rows = []
-    missing = False
+    missing_required = False
     for status in details.get("statuses", []):
         available = "ok" if status["available"] else "missing"
-        if not status["available"]:
-            missing = True
+        if not status["available"] and status.get("required", True):
+            missing_required = True
         rows.append([status["name"], status["category"], available, status.get("remediation", "") if not status["available"] else ""])
     _render_table(f"Dependency Check: {details.get('feature', feature)}", ["Name", "Type", "Status", "Remediation"], rows)
-    if missing:
+    if missing_required:
         raise typer.Exit(code=3)
 
 

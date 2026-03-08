@@ -11,7 +11,8 @@
 <p align="center">
   <a href="https://github.com/AboveWireless/WirelessOffice/releases">Download for Windows</a> |
   <a href="docs/run-from-source.md">Run from source</a> |
-  <a href="docs/enabling-ocr.md">Enable OCR later</a>
+  <a href="docs/enabling-ocr.md">Enable OCR later</a> |
+  <a href="docs/enabling-llm.md">Enable OpenAI analysis</a>
 </p>
 
 ## Why this exists
@@ -105,23 +106,15 @@ Core PDF workflows work out of the box. If you want OCR, install or bundle:
 
 Details: [docs/enabling-ocr.md](docs/enabling-ocr.md)
 
-## Preview
+## OpenAI analysis note
 
-### Main workspace
+OpenAI-powered LLM analysis is optional.
 
-![Main workspace](docs/assets/screenshot-start-here.png)
+- packaged Windows builds can expose it when `OPENAI_API_KEY` is set
+- source installs should add the `llm` extras
+- local LLM-ready extraction works without network access
 
-### PDF preview workflow
-
-![Preview workflow](docs/assets/screenshot-preview.svg)
-
-### Diagnostics and readiness
-
-![Diagnostics tab](docs/assets/screenshot-diagnostics.svg)
-
-### Example operation flow
-
-![Workflow example](docs/assets/screenshot-workflow.svg)
+Details: [docs/enabling-llm.md](docs/enabling-llm.md)
 
 ## Sample workflows
 
@@ -152,6 +145,12 @@ python -m venv .venv
 python -m pip install -U pip
 python -m pip install -e .[dev]
 python -m pdf_toolkit
+```
+
+If you also want optional OpenAI analysis from source:
+
+```powershell
+python -m pip install -e .[llm]
 ```
 
 You can also use:

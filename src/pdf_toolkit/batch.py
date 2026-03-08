@@ -13,13 +13,14 @@ from watchdog.observers import Observer
 
 from pdf_toolkit.config import ToolkitConfig
 from pdf_toolkit.core import compress_pdf, ensure_dir, extract_text, inspect_pdf, render_pdf, set_metadata
-from pdf_toolkit.errors import ValidationError
-from pdf_toolkit.llm_analysis import DEFAULT_LLM_MODEL, analyze_pdf_with_llm
+from pdf_toolkit.errors import DependencyMissingError, ValidationError
 from pdf_toolkit.llm_extract import extract_for_llm
 from pdf_toolkit.ocr import run_ocr
 from pdf_toolkit.redaction import run_redaction
 from pdf_toolkit.reporting import write_batch_csv, write_json
 from pdf_toolkit.tables import extract_tables_to_files
+
+DEFAULT_LLM_MODEL = "gpt-5-mini"
 
 
 LogCallback = Callable[[str], None]
@@ -130,6 +131,16 @@ def _base_output_dir(output_root: Path, job_name: str, input_path: Path) -> Path
     return output_root / job_name / input_path.stem
 
 
+def _load_llm_analysis_runner() -> Callable[..., dict[str, object]]:
+    try:
+        from pdf_toolkit.llm_analysis import analyze_pdf_with_llm
+    except ImportError as exc:
+        raise DependencyMissingError(
+            "LLM analysis requires the optional `llm` extras. Install with `python -m pip install -e .[llm]`."
+        ) from exc
+    return analyze_pdf_with_llm
+
+
 def _run_step(step: dict[str, object], current_pdf: Path, base_output_dir: Path, config: ToolkitConfig) -> tuple[Path, list[str]]:
     ensure_dir(base_output_dir)
     action = str(step.get("action", "")).strip()
@@ -185,6 +196,7 @@ def _run_step(step: dict[str, object], current_pdf: Path, base_output_dir: Path,
         return current_pdf, [str(path) for path in result["outputs"]]
 
     if action == "analyze_llm":
+        analyze_pdf_with_llm = _load_llm_analysis_runner()
         result = analyze_pdf_with_llm(
             current_pdf,
             base_output_dir,

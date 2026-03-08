@@ -37,6 +37,8 @@ The first public installer release is unsigned. Windows SmartScreen may show a w
 - OCR support
 - OpenAI-powered LLM analysis
 
+See [enabling-ocr.md](./enabling-ocr.md) and [enabling-llm.md](./enabling-llm.md) if you want to turn those on later.
+
 ## Portable fallback
 
 If you prefer not to install the app, download `pdf-toolkit-windows-x64.zip`, extract it to a normal folder, and run `pdf-toolkit-gui.exe`.

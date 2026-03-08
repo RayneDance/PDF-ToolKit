@@ -24,6 +24,7 @@ That is expected unless `OPENAI_API_KEY` is configured. Local LLM-ready extracti
 
 - Confirm you are using Python 3.11 or newer.
 - Recreate `.venv` and reinstall with `python -m pip install -e .[dev]`.
+- If you want OpenAI-powered analysis from source, also install `python -m pip install -e .[llm]`.
 
 ## Need more detail
 

@@ -28,6 +28,7 @@ from pdf_toolkit.core import (
     remove_annotations,
     render_pdf,
     rotate_pdf,
+    sanitize_filename,
     select_pages,
     set_metadata,
     split_pdf,
@@ -35,13 +36,14 @@ from pdf_toolkit.core import (
 )
 from pdf_toolkit.duplicates import remove_duplicate_pdfs
 from pdf_toolkit.environment import collect_doctor_status
-from pdf_toolkit.errors import ValidationError
+from pdf_toolkit.errors import DependencyMissingError, ValidationError
 from pdf_toolkit.execution import run_mutation
-from pdf_toolkit.llm_analysis import DEFAULT_LLM_MODEL, analysis_output_paths, analyze_pdf_with_llm
 from pdf_toolkit.llm_extract import extract_for_llm, llm_output_paths
 from pdf_toolkit.ocr import run_ocr, scan_detect
 from pdf_toolkit.redaction import run_redaction
 from pdf_toolkit.tables import extract_tables_to_files
+
+DEFAULT_LLM_MODEL = "gpt-5-mini"
 
 FieldKind = Literal[
     "text",
@@ -359,12 +361,16 @@ def _doctor_handler(request: JobRequest, config: ToolkitConfig) -> dict[str, obj
     del config
     feature = request.values["feature"] or "all"
     statuses = collect_doctor_status(str(feature))
+    missing_required = any(not status.available and status.required for status in statuses)
+    missing_optional = any(not status.available and not status.required for status in statuses)
     return {
         "outputs": [],
         "details": {
             "feature": feature,
             "statuses": [_serialize(status) for status in statuses],
-            "missing": any(not status.available for status in statuses),
+            "missing": missing_required,
+            "missing_required": missing_required,
+            "missing_optional": missing_optional,
         },
     }
 
@@ -507,7 +513,27 @@ def _extract_llm_handler(request: JobRequest, config: ToolkitConfig) -> dict[str
     )
 
 
+def _llm_analysis_output_paths(input_path: Path, output_dir: Path, preset: str) -> list[Path]:
+    normalized_document_id = sanitize_filename(input_path.stem.lower(), "document")
+    analysis_dir = output_dir / "analysis"
+    return [
+        analysis_dir / f"{normalized_document_id}-{preset}.json",
+        analysis_dir / f"{normalized_document_id}-{preset}.md",
+    ]
+
+
+def _load_llm_analysis_tools() -> Callable[..., dict[str, object]]:
+    try:
+        from pdf_toolkit.llm_analysis import analyze_pdf_with_llm
+    except ImportError as exc:
+        raise DependencyMissingError(
+            "LLM analysis requires the optional `llm` extras. Install with `python -m pip install -e .[llm]`."
+        ) from exc
+    return analyze_pdf_with_llm
+
+
 def _analyze_llm_handler(request: JobRequest, config: ToolkitConfig) -> dict[str, object]:
+    analyze_pdf_with_llm = _load_llm_analysis_tools()
     input_path = request.values["input_path"]
     output_dir = request.values["output_dir"]
     preset = str(request.values["preset"] or "summary")
@@ -519,7 +545,7 @@ def _analyze_llm_handler(request: JobRequest, config: ToolkitConfig) -> dict[str
         request,
         config,
         input_paths=[input_path],
-        planned_outputs=analysis_output_paths(input_path, output_dir, preset),
+        planned_outputs=_llm_analysis_output_paths(input_path, output_dir, preset),
         action=lambda: analyze_pdf_with_llm(
             input_path,
             output_dir,
